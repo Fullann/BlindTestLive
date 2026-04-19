@@ -1,11 +1,18 @@
-export type MediaType = 'audio' | 'video' | 'image' | 'text' | 'youtube' | 'spotify' | 'url';
+// audio: fichier audio uploadé ou URL directe
+// video: fichier vidéo uploadé ou URL directe
+// image: image uploadée ou URL
+// text: texte/indice affiché à l'écran
+// voice: enregistrement vocal (fichier audio généré par le navigateur)
+// youtube: lien YouTube (embed)
+// url: URL générique (audio/vidéo externe)
+export type MediaType = 'audio' | 'video' | 'image' | 'text' | 'voice' | 'youtube' | 'url';
 
 export interface Track {
   id: string;
   title: string;
   artist: string;
   mediaType?: MediaType;
-  mediaUrl?: string; // URL to the media file or YouTube/Spotify ID
+  mediaUrl?: string; // URL to the media file or YouTube ID
   textContent?: string; // If mediaType is 'text'
   duration?: number; // Time allowed for this track in seconds
   startTime?: number; // Start time in seconds for audio/video
@@ -21,9 +28,43 @@ export interface Player {
   lockedOut: boolean;
   team?: string; // Optional team name/color
   playerSecret?: string; // Secret token for reconnection
+  combo?: number;
+  jokers?: {
+    doublePoints: boolean;
+    stealPoints: boolean;
+    skipRound: boolean;
+  };
+  doublePointsArmed?: boolean;
+  stats?: {
+    buzzes: number;
+    correctAnswers: number;
+    wrongAnswers: number;
+  };
+  deviceType?: 'mobile' | 'esp32';
+  buzzerDeviceId?: string;
 }
 
-export type GameStatus = 'lobby' | 'countdown' | 'playing' | 'paused' | 'revealed' | 'finished';
+export interface TeamConfig {
+  id: string;
+  name: string;
+  color: string;
+  enabled: boolean;
+}
+
+export type GameStatus = 'lobby' | 'onboarding' | 'countdown' | 'playing' | 'paused' | 'revealed' | 'finished';
+
+export interface HardwareDeviceState {
+  id: string;
+  name: string;
+  gameId?: string;
+  playerId?: string;
+  status: 'offline' | 'online';
+  lastSeenAt: number;
+  firmware?: string;
+  rssi?: number;
+  speakerEnabled?: boolean;
+  speakerMuted?: boolean;
+}
 
 export interface GameState {
   id: string;
@@ -38,10 +79,34 @@ export interface GameState {
   trackStartTime?: number; // When the current track started playing
   countdown?: number; // 3, 2, 1, 0
   youtubeVideoId?: string;
-  isSpotifyMode?: boolean;
   isTeamMode?: boolean;
+  shuffleQuestions?: boolean;
   roundNumber?: number;
+  difficulty?: "easy" | "medium" | "hard";
+  defaultTrackDuration?: number;
+  theme?: "dark" | "neon" | "retro" | "minimal";
+  eventLogs?: Array<{ ts: number; type: string; message: string }>;
+  hostTokenExpiresAt?: number;
+  cohostTokenExpiresAt?: Record<string, number>;
   lastActivity: number;
+  enableBonuses?: boolean;
+  teamConfig?: TeamConfig[];
+  onboardingEnabled?: boolean;
+  tutorialSeconds?: number;
+  tournamentMode?: boolean;
+  rules?: {
+    wrongAnswerPenalty: number;
+    progressiveLock: boolean;
+    progressiveLockBaseMs: number;
+    antiSpamPenalty: number;
+  };
+  rounds?: Array<{
+    id: string;
+    name: string;
+    startIndex: number;
+    endIndex: number;
+  }>;
+  hardwareDevices?: Record<string, HardwareDeviceState>;
 }
 
 export interface Playlist {
@@ -50,4 +115,26 @@ export interface Playlist {
   ownerId: string;
   tracks: Track[];
   createdAt: number;
+  visibility?: "private" | "public";
+  category?: string;
+  likesCount?: number;
+  downloadsCount?: number;
+  ownerEmail?: string;
+}
+
+export type BlindTestMode = "playlist" | "youtube";
+export type BlindTestStatus = "active" | "finished";
+
+export interface BlindTestSession {
+  id: string;
+  ownerId: string;
+  title: string;
+  mode: BlindTestMode;
+  status: BlindTestStatus;
+  createdAt: number;
+  endedAt?: number;
+  gameId: string;
+  hostToken?: string;
+  playlistId?: string;
+  sourceUrl?: string;
 }

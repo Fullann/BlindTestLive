@@ -6,12 +6,6 @@ import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Trophy, Music, Users } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import YouTube from 'react-youtube';
-
-const extractYoutubeId = (url: string) => {
-  const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^&?]+)/);
-  return match ? match[1] : url;
-};
 
 const Timer = ({ gameState, duration }: { gameState: GameState, duration: number }) => {
   const [timeLeft, setTimeLeft] = useState(duration);
@@ -104,15 +98,10 @@ export default function PublicScreen() {
   const hasFinishedRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const youtubePlayerRef = useRef<any>(null);
 
   useEffect(() => {
     if (gameState?.playlist && gameState.currentTrackIndex !== undefined) {
       const track = gameState.playlist[gameState.currentTrackIndex];
-      if (track?.mediaType !== 'youtube') {
-        youtubePlayerRef.current = null;
-      }
-      
       // Reset audio/video to start time when track changes
       try {
         if (audioRef.current) {
@@ -131,15 +120,9 @@ export default function PublicScreen() {
     if (gameState?.status === 'playing') {
       audioRef.current?.play().catch(() => {});
       videoRef.current?.play().catch(() => {});
-      if (youtubePlayerRef.current && typeof youtubePlayerRef.current.playVideo === 'function') {
-        youtubePlayerRef.current.playVideo();
-      }
     } else {
       audioRef.current?.pause();
       videoRef.current?.pause();
-      if (youtubePlayerRef.current && typeof youtubePlayerRef.current.pauseVideo === 'function') {
-        youtubePlayerRef.current.pauseVideo();
-      }
     }
   }, [gameState?.status]);
 
@@ -205,14 +188,25 @@ export default function PublicScreen() {
     };
   }, [gameId]);
 
+  useEffect(() => {
+    if (document.fullscreenElement) return;
+    document.documentElement.requestFullscreen?.().catch(() => {});
+  }, []);
+
   if (!gameState) {
     return <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center text-2xl">En attente de la partie...</div>;
   }
 
-  const joinUrl = `${window.location.origin}/`;
+  const joinUrl = `${window.location.origin}/game/${gameId}`;
   const buzzedPlayer = gameState.buzzedPlayerId ? gameState.players[gameState.buzzedPlayerId] : null;
   const isYoutubeMode = !!gameState.youtubeVideoId;
   const currentTrack = !isYoutubeMode ? gameState.playlist[gameState.currentTrackIndex] : null;
+  const trackDuration = currentTrack?.duration || gameState.defaultTrackDuration || 20;
+  const progressPct = !isYoutubeMode && gameState.playlist.length > 0
+    ? Math.round(((gameState.currentTrackIndex + 1) / gameState.playlist.length) * 100)
+    : 0;
+  const sortedPlayers = (Object.values(gameState.players) as Player[]).sort((a, b) => b.score - a.score);
+  const top3 = sortedPlayers.slice(0, 3);
 
   // Calculate team scores if in team mode
   const teamScores = gameState.isTeamMode ? (Object.values(gameState.players) as Player[]).reduce((acc, player) => {
@@ -223,19 +217,37 @@ export default function PublicScreen() {
   }, {} as Record<string, number>) : null;
 
   const getTeamName = (teamId: string) => {
-    const names: Record<string, string> = { red: 'Rouge', blue: 'Bleue', green: 'Verte', yellow: 'Jaune' };
-    return names[teamId] || teamId;
+    const configured = gameState.teamConfig?.find((team) => team.id === teamId);
+    return configured?.name || teamId;
   };
 
   const getTeamColor = (teamId: string) => {
-    const colors: Record<string, string> = { red: '#ef4444', blue: '#3b82f6', green: '#22c55e', yellow: '#eab308' };
-    return colors[teamId] || '#ffffff';
+    const configured = gameState.teamConfig?.find((team) => team.id === teamId);
+    return configured?.color || '#ffffff';
   };
 
+  const themeClass =
+    gameState.theme === 'neon'
+      ? 'bg-black text-cyan-100'
+      : gameState.theme === 'retro'
+        ? 'bg-amber-950 text-amber-100'
+        : gameState.theme === 'minimal'
+          ? 'bg-zinc-100 text-zinc-900'
+          : 'bg-zinc-950 text-white';
+
   return (
-    <div className="min-h-screen bg-zinc-950 text-white flex flex-col overflow-hidden">
+    <div className={`min-h-screen ${themeClass} flex flex-col overflow-hidden app-shell`}>
+      <div className="px-6 py-2 text-sm border-b border-white/10 flex items-center justify-between bg-black/20">
+        <div className="flex items-center gap-4 overflow-hidden whitespace-nowrap">
+          <span className="font-semibold">Top 3:</span>
+          {top3.map((p, i) => (
+            <span key={p.id}>{i + 1}. {p.name} ({p.score})</span>
+          ))}
+        </div>
+        <div className="font-mono">Progression: {progressPct}%</div>
+      </div>
       {/* Top Bar */}
-      <div className="bg-zinc-900 border-b border-white/10 p-6 flex items-center justify-between">
+      <div className="bg-black/20 border-b border-white/10 p-6 flex items-center justify-between">
         <div className="flex items-center gap-6">
           <div className="bg-white p-2 rounded-xl">
             <QRCodeSVG value={joinUrl} size={80} />
@@ -280,6 +292,26 @@ export default function PublicScreen() {
                 <Music className="w-32 h-32 text-indigo-500/50 mx-auto mb-8 animate-pulse" />
                 <h1 className="text-6xl font-bold tracking-tight mb-4">En attente de joueurs</h1>
                 <p className="text-2xl text-zinc-400">Scannez le QR code pour rejoindre !</p>
+              </motion.div>
+            )}
+
+            {gameState.status === 'onboarding' && (
+              <motion.div
+                key="onboarding"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 1.05 }}
+                className="text-center bg-zinc-900/85 border border-white/10 rounded-3xl p-12 max-w-4xl"
+              >
+                <h1 className="text-5xl font-bold mb-6">Tutoriel joueur</h1>
+                <div className="space-y-3 text-zinc-300 text-2xl">
+                  <p>1. Rejoins avec le QR code ou le code partie</p>
+                  <p>2. Appuie sur BUZZ dès que tu penses avoir la réponse</p>
+                  <p>3. L&apos;animateur valide et les points s&apos;ajoutent</p>
+                </div>
+                <p className="mt-8 text-3xl font-semibold text-indigo-300">
+                  Lancement dans {gameState.countdown || gameState.tutorialSeconds || 10}s
+                </p>
               </motion.div>
             )}
 
@@ -332,28 +364,27 @@ export default function PublicScreen() {
                     />
                   </div>
                 ) : currentTrack?.mediaType === 'youtube' && currentTrack.mediaUrl ? (
-                  <div className="mb-8 rounded-2xl overflow-hidden shadow-2xl border-4 border-indigo-500/30 aspect-video w-full max-w-3xl mx-auto">
-                    <YouTube 
-                      videoId={extractYoutubeId(currentTrack.mediaUrl)} 
-                      opts={{ 
-                        width: '100%', 
-                        height: '100%', 
-                        playerVars: { 
-                          autoplay: 1, 
-                          controls: 0,
-                          start: currentTrack.startTime || 0
-                        } 
-                      }} 
-                      onReady={(e) => {
-                        youtubePlayerRef.current = e.target;
-                        if (gameState.status === 'playing') {
-                          e.target.playVideo();
-                        } else {
-                          e.target.pauseVideo();
-                        }
-                      }}
-                      className="w-full h-full"
-                    />
+                  <div className="mb-8 rounded-2xl p-12 shadow-2xl border-4 border-indigo-500/30 bg-zinc-900/80 backdrop-blur-sm w-full max-w-5xl mx-auto min-h-[320px] flex flex-col justify-center">
+                    <p className="text-3xl font-semibold text-center mb-10">Lecture en cours...</p>
+                    <div className="flex items-end justify-center gap-3 h-44">
+                      {[0, 1, 2, 3, 4, 5, 6].map((bar) => (
+                        <motion.div
+                          key={bar}
+                          className="w-5 rounded-full bg-gradient-to-t from-indigo-500 to-fuchsia-400"
+                          initial={{ height: 20 }}
+                          animate={{ height: [20, 120, 48, 156, 34, 110, 20] }}
+                          transition={{
+                            duration: 1.2,
+                            repeat: Infinity,
+                            ease: 'easeInOut',
+                            delay: bar * 0.08,
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <p className="text-zinc-400 mt-8 text-center text-lg">
+                      Source privée animateur
+                    </p>
                   </div>
                 ) : currentTrack?.mediaType === 'text' && currentTrack.textContent ? (
                   <div className="mb-8 rounded-2xl p-12 shadow-2xl border-4 border-indigo-500/30 bg-zinc-900/80 backdrop-blur-sm">
@@ -385,8 +416,8 @@ export default function PublicScreen() {
                    'Écoutez bien...'}
                 </h1>
                 
-                {gameState.trackStartTime && currentTrack?.duration && (
-                  <Timer gameState={gameState} duration={currentTrack.duration} />
+                {gameState.trackStartTime && (
+                  <Timer gameState={gameState} duration={trackDuration} />
                 )}
               </motion.div>
             )}
@@ -493,12 +524,11 @@ export default function PublicScreen() {
         </div>
 
         {/* Right: Leaderboard */}
-        <div className="w-1/3 bg-zinc-900/50 border-l border-white/5 p-8 flex flex-col">
+        <div className="w-1/3 bg-black/20 border-l border-white/5 p-8 flex flex-col">
           <h2 className="text-3xl font-bold mb-8 flex items-center gap-4">
             <Trophy className="w-8 h-8 text-yellow-500" />
             Classement {gameState.isTeamMode ? 'par Équipe' : ''}
           </h2>
-          
           <div className="flex-1 overflow-y-auto space-y-4 pr-4">
             <AnimatePresence>
               {gameState.isTeamMode && teamScores ? (

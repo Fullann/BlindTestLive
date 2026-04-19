@@ -1,0 +1,49 @@
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootsecret
+      MYSQL_DATABASE: blindtest
+      MYSQL_USER: blindtest
+      MYSQL_PASSWORD: secret
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "127.0.0.1:3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "blindtest", "-psecret"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  app:
+    build: .
+    profiles: ["app"]
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: blindtest
+      DB_USER: blindtest
+      DB_PASSWORD: secret
+      JWT_SECRET: ${JWT_SECRET:-changeme_with_a_long_random_secret}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+      METRICS_TOKEN: ${METRICS_TOKEN:-changeme}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    volumes:
+      - uploads_data:/app/uploads
+      - games_data:/app/data
+    ports:
+      - "3000:3000"
+
+volumes:
+  mysql_data:
+  uploads_data:
+  games_data:
