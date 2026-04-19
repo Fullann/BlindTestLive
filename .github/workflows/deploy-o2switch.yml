@@ -45,8 +45,14 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dist
-          path: dist
+          name: deploy-bundle
+          path: |
+            dist
+            server
+            src/types.ts
+            server.ts
+            package.json
+            package-lock.json
 
   deploy:
     runs-on: ubuntu-latest
@@ -56,8 +62,8 @@ jobs:
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
-          name: dist
-          path: dist
+          name: deploy-bundle
+          path: deploy-bundle
 
       - name: Deploy via FTPS (o2switch)
         uses: SamKirkland/FTP-Deploy-Action@v4.3.6
@@ -67,6 +73,6 @@ jobs:
           password: ${{ secrets.SFTP_PASSWORD }}
           port: ${{ secrets.SFTP_PORT }}
           protocol: ftps
-          local-dir: dist/
+          local-dir: deploy-bundle/
           server-dir: /
           dangerous-clean-slate: true
