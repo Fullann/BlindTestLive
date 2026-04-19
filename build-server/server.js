@@ -385,8 +385,9 @@ async function startServer() {
             enableDb: ENABLE_DB,
         });
     });
-    // Vite middleware for development
-    if (process.env.NODE_ENV !== "production") {
+    // Use Vite middleware only when explicitly in development.
+    // Some shared hosts may not inject NODE_ENV reliably for Passenger apps.
+    if (process.env.NODE_ENV === "development") {
         const viteModulePath = "vite";
         const { createServer: createViteServer } = await Promise.resolve(`${viteModulePath}`).then(s => __importStar(require(s)));
         const vite = await createViteServer({

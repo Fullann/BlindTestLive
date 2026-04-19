@@ -382,8 +382,9 @@ async function startServer() {
     });
   });
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  // Use Vite middleware only when explicitly in development.
+  // Some shared hosts may not inject NODE_ENV reliably for Passenger apps.
+  if (process.env.NODE_ENV === "development") {
     const viteModulePath = "vite";
     const { createServer: createViteServer } = await import(viteModulePath);
     const vite = await createViteServer({
