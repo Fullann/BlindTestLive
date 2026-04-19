@@ -1,6 +1,5 @@
 import "dotenv/config";
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import { Server } from "socket.io";
 import http from "http";
 import fs from "fs";
@@ -385,6 +384,8 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const viteModulePath = "vite";
+    const { createServer: createViteServer } = await import(viteModulePath);
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

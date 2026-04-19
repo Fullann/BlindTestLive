@@ -48,9 +48,7 @@ jobs:
           name: deploy-bundle
           path: |
             dist
-            server
-            src/types.ts
-            server.ts
+            build-server
             package.json
             package-lock.json
 
