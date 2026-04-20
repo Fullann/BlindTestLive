@@ -47,7 +47,7 @@ jobs:
         with:
           name: deploy-bundle
           path: |
-            app.js
+            app.cjs
             dist
             build-server
             package.json
