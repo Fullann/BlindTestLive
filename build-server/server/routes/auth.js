@@ -37,6 +37,11 @@ function clearAuthCookies(res) {
     res.clearCookie(TWO_FACTOR_TEMP_COOKIE, { path: '/' });
 }
 function getDbErrorMessage(err) {
+    if (process.env.AUTH_DEBUG_ERRORS === 'true') {
+        const code = err?.code ? ` (${err.code})` : '';
+        const message = err?.message ? `: ${err.message}` : '';
+        return `Erreur serveur${code}${message}`;
+    }
     if (err?.code === 'ECONNREFUSED') {
         return 'Base de données indisponible. Lance MySQL puis réessaie.';
     }
