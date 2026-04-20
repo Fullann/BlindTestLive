@@ -155,9 +155,29 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     let active = true;
+    const env = (import.meta as any).env as Record<string, unknown> | undefined;
+    const metricsToken = env?.VITE_METRICS_TOKEN as string | undefined;
+    const isProd = Boolean(env?.PROD);
+    const hasMetricsToken = Boolean(metricsToken && metricsToken.trim().length > 0);
+
+    // En production, /api/metrics exige un token serveur.
+    // Sans token frontend explicite, on n'essaie pas de poller pour éviter les 401 en boucle.
+    if (isProd && !hasMetricsToken) {
+      return () => {
+        active = false;
+      };
+    }
+
     const pollMetrics = async () => {
       try {
-        const res = await fetch('/api/metrics');
+        const headers: Record<string, string> = {};
+        if (hasMetricsToken && metricsToken) {
+          headers['x-metrics-token'] = metricsToken;
+        }
+        const res = await fetch('/api/metrics', { headers, credentials: 'include' });
+        if (res.status === 401) {
+          return;
+        }
         if (!res.ok) return;
         const data = await res.json();
         if (active) {
