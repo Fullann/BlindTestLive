@@ -280,6 +280,127 @@ async function ensureAnalyticsSchema() {
   analyticsSchemaChecked = true;
 }
 
+async function runStartupMigrations() {
+  if (!dbPool) return;
+
+  // Colonnes store playlists
+  await dbPool.query(
+    `CREATE TABLE IF NOT EXISTS playlist_likes (
+      playlist_id VARCHAR(36) NOT NULL,
+      user_id     VARCHAR(36) NOT NULL,
+      created_at  BIGINT      NOT NULL,
+      PRIMARY KEY (playlist_id, user_id),
+      INDEX idx_playlist_likes_user (user_id)
+    )`,
+  );
+  for (const [col, def] of [
+    ["category",        "category VARCHAR(64) NOT NULL DEFAULT 'general'"],
+    ["likes_count",     "likes_count INT NOT NULL DEFAULT 0"],
+    ["downloads_count", "downloads_count INT NOT NULL DEFAULT 0"],
+  ] as const) {
+    const [rows] = await dbPool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_schema = DATABASE() AND table_name = 'playlists' AND column_name = ?
+       LIMIT 1`,
+      [col],
+    );
+    if ((rows as any[]).length === 0) {
+      await dbPool.query(`ALTER TABLE playlists ADD COLUMN ${def}`).catch((e: any) => {
+        if (e?.code !== "ER_DUP_FIELDNAME") throw e;
+      });
+    }
+  }
+
+  // Tokens collaboration
+  await dbPool.query(
+    `CREATE TABLE IF NOT EXISTS playlist_collab_tokens (
+      playlist_id VARCHAR(36)  NOT NULL,
+      token       VARCHAR(255) NOT NULL,
+      created_by  VARCHAR(36)  NOT NULL,
+      created_at  BIGINT       NOT NULL,
+      expires_at  BIGINT       NOT NULL,
+      PRIMARY KEY (playlist_id, token),
+      INDEX idx_collab_token (token),
+      INDEX idx_collab_expires (expires_at)
+    )`,
+  );
+
+  // Tournois multi-soirées
+  await dbPool.query(
+    `CREATE TABLE IF NOT EXISTS tournaments (
+      id         VARCHAR(36)  NOT NULL PRIMARY KEY,
+      owner_id   VARCHAR(36)  NOT NULL,
+      name       VARCHAR(255) NOT NULL,
+      starts_at  BIGINT       NULL,
+      ends_at    BIGINT       NULL,
+      created_at BIGINT       NOT NULL,
+      INDEX idx_tournaments_owner (owner_id)
+    )`,
+  );
+  await dbPool.query(
+    `CREATE TABLE IF NOT EXISTS tournament_sessions (
+      tournament_id VARCHAR(36) NOT NULL,
+      blindtest_id  VARCHAR(36) NOT NULL,
+      created_at    BIGINT      NOT NULL,
+      PRIMARY KEY (tournament_id, blindtest_id),
+      INDEX idx_tournament_sessions_bt (blindtest_id)
+    )`,
+  );
+
+  // Branding événement
+  await dbPool.query(
+    `CREATE TABLE IF NOT EXISTS event_branding (
+      blindtest_id  VARCHAR(36)  NOT NULL PRIMARY KEY,
+      owner_id      VARCHAR(36)  NOT NULL,
+      client_name   VARCHAR(255) NOT NULL DEFAULT '',
+      logo_url      TEXT         NULL,
+      primary_color VARCHAR(16)  NOT NULL DEFAULT '#6366f1',
+      accent_color  VARCHAR(16)  NOT NULL DEFAULT '#a855f7',
+      created_at    BIGINT       NOT NULL,
+      updated_at    BIGINT       NOT NULL,
+      INDEX idx_event_branding_owner (owner_id)
+    )`,
+  );
+
+  // Profils joueurs persistants
+  await dbPool.query(
+    `CREATE TABLE IF NOT EXISTS player_profiles (
+      public_id      VARCHAR(64) NOT NULL PRIMARY KEY,
+      nickname       VARCHAR(32) NOT NULL,
+      badges_json    JSON        NOT NULL,
+      seasons_json   JSON        NOT NULL,
+      total_sessions INT         NOT NULL DEFAULT 0,
+      total_score    INT         NOT NULL DEFAULT 0,
+      total_buzzes   INT         NOT NULL DEFAULT 0,
+      total_correct  INT         NOT NULL DEFAULT 0,
+      total_wrong    INT         NOT NULL DEFAULT 0,
+      created_at     BIGINT      NOT NULL,
+      updated_at     BIGINT      NOT NULL,
+      INDEX idx_player_profiles_nickname (nickname)
+    )`,
+  );
+  await dbPool.query(
+    `CREATE TABLE IF NOT EXISTS player_profile_sessions (
+      id              VARCHAR(36) NOT NULL PRIMARY KEY,
+      public_id       VARCHAR(64) NOT NULL,
+      game_id         VARCHAR(10) NOT NULL,
+      player_name     VARCHAR(64) NOT NULL,
+      score           INT         NOT NULL DEFAULT 0,
+      buzzes          INT         NOT NULL DEFAULT 0,
+      correct_answers INT         NOT NULL DEFAULT 0,
+      wrong_answers   INT         NOT NULL DEFAULT 0,
+      created_at      BIGINT      NOT NULL,
+      INDEX idx_player_profile_sessions_public (public_id),
+      INDEX idx_player_profile_sessions_created (created_at)
+    )`,
+  );
+
+  // Analytics
+  await ensureAnalyticsSchema();
+
+  console.info("DB migrations: OK");
+}
+
 async function startServer() {
   loadGamesFromDisk();
   if (process.env.SENTRY_DSN) {
@@ -290,9 +411,9 @@ async function startServer() {
     const dbModule = await import("./server/db");
     dbPool = dbModule.default;
     try {
-      await ensureAnalyticsSchema();
+      await runStartupMigrations();
     } catch (error) {
-      console.warn("Analytics schema init skipped:", error);
+      console.warn("DB startup migrations skipped:", error);
     }
   }
   app.use(

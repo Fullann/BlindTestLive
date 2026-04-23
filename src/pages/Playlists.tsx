@@ -76,13 +76,13 @@ interface PlaylistItem {
 }
 
 export default function Playlists() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { success: toastSuccess, error: toastError } = useToast();
 
   const [view, setView] = useState<'list' | 'create'>('list');
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
 
   // New playlist form
@@ -92,14 +92,15 @@ export default function Playlists() {
   const [visibility, setVisibility] = useState<'private' | 'public'>('private');
 
   useEffect(() => {
+    if (authLoading) return;
     if (!user) { navigate('/'); return; }
     fetchPlaylists();
-  }, [user, navigate]);
+  }, [user, authLoading, navigate]);
 
   const fetchPlaylists = async () => {
     setLoading(true);
     try {
-      const res = await api.playlists.getAll();
+      const res = await api.playlists.list();
       setPlaylists(
         (res.playlists || []).map((p: any) => ({
           id: p.id,
@@ -109,7 +110,8 @@ export default function Playlists() {
           category: p.category,
         }))
       );
-    } catch {
+    } catch (err) {
+      console.error('fetchPlaylists error:', err);
       toastError('Impossible de charger les playlists');
     } finally {
       setLoading(false);
@@ -158,6 +160,11 @@ export default function Playlists() {
     }
   };
 
+  if (authLoading) return (
+    <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+      <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
+    </div>
+  );
   if (!user) return null;
 
   return (
@@ -165,11 +172,11 @@ export default function Playlists() {
       {/* Header */}
       <header className="flex items-center gap-4 px-6 py-4 border-b border-white/5 sticky top-0 bg-zinc-950/80 backdrop-blur z-10">
         <button
-          onClick={() => view === 'create' ? setView('list') : navigate('/')}
+          onClick={() => view === 'create' ? setView('list') : navigate('/admin')}
           className="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
-          {view === 'create' ? 'Mes playlists' : 'Accueil'}
+          {view === 'create' ? 'Mes playlists' : 'Dashboard'}
         </button>
         <div className="flex-1" />
         <div className="flex items-center gap-2">

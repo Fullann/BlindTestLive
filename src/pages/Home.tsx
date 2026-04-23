@@ -291,15 +291,6 @@ export default function Home() {
                 ))}
               </div>
 
-              <div className="text-center">
-                <button
-                  onClick={() => navigate('/playlists')}
-                  className="inline-flex items-center gap-2 text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  Créer ou gérer une playlist
-                </button>
-              </div>
             </motion.div>
           ) : (
             /* ── Panneau de connexion ── */

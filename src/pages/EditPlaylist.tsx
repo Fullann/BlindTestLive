@@ -29,7 +29,7 @@ function toYouTubeEmbed(url: string): string {
 }
 
 export default function EditPlaylist() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const { error: toastError, warning: toastWarning, success: toastSuccess, info: toastInfo } = useToast();
   const { playlistId } = useParams<{ playlistId: string }>();
   const [searchParams] = useSearchParams();
@@ -83,6 +83,7 @@ export default function EditPlaylist() {
   useEffect(() => {
     const fetchPlaylist = async () => {
       if (!playlistId) return;
+      if (authLoading) return;
       if (!user) { navigate('/'); return; }
       try {
         const { playlist: data } = activeCollabToken
@@ -100,7 +101,7 @@ export default function EditPlaylist() {
       }
     };
     fetchPlaylist();
-  }, [playlistId, navigate, user, activeCollabToken]);
+  }, [playlistId, navigate, user, authLoading, activeCollabToken]);
 
   useEffect(() => {
     if (!playlistId || !activeCollabToken) return;
@@ -796,16 +797,18 @@ export default function EditPlaylist() {
                               />
                             </div>
                           )}
-                          {track.mediaType === 'image' && previewSrc && (
+                          {track.mediaType === 'image' && (
                             <div className="space-y-3">
-                              <img
-                                src={previewSrc}
-                                alt="preview"
-                                className="max-h-48 rounded-lg"
-                                style={{
-                                  filter: track.imageRevealMode === 'blur' ? 'blur(8px)' : 'none',
-                                }}
-                              />
+                              {previewSrc && (
+                                <img
+                                  src={previewSrc}
+                                  alt="preview"
+                                  className="max-h-48 rounded-lg"
+                                  style={{
+                                    filter: track.imageRevealMode === 'blur' ? 'blur(8px)' : 'none',
+                                  }}
+                                />
+                              )}
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                                 <select
                                   value={track.imageRevealMode || 'none'}
@@ -837,6 +840,12 @@ export default function EditPlaylist() {
                                   placeholder="Indice visuel (optionnel)"
                                 />
                               </div>
+                              <textarea
+                                value={track.textContent || ''}
+                                onChange={(e) => updateTrack(track.id, { textContent: e.target.value })}
+                                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 h-20 resize-none text-sm"
+                                placeholder="Texte affiché sur grand écran (optionnel). Exemple: 'Quel film est représenté ?'"
+                              />
                             </div>
                           )}
                         </div>

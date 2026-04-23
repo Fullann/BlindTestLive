@@ -486,6 +486,9 @@ export default function PublicScreen() {
                 {currentTrack?.mediaType === 'image' && currentTrack?.visualHint && (
                   <p className="mt-5 text-2xl text-zinc-300">{currentTrack.visualHint}</p>
                 )}
+                {currentTrack?.mediaType === 'image' && currentTrack?.textContent && (
+                  <p className="mt-4 text-3xl text-zinc-100 font-medium leading-relaxed">{currentTrack.textContent}</p>
+                )}
                 
                 {gameState.trackStartTime && (
                   <Timer
