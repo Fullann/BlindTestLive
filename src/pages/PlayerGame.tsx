@@ -1,10 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { socket } from '../lib/socket';
 import { GameState, Player } from '../types';
 import { useToast } from '../context/ToastContext';
+import { api } from '../api';
 import { motion } from 'framer-motion';
 import clsx from 'clsx';
+
+const RTC_CONFIG: RTCConfiguration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ],
+};
 
 // Simple sound synthesizer
 const playSound = (type: 'buzz' | 'correct' | 'wrong') => {
@@ -51,7 +59,7 @@ const playSound = (type: 'buzz' | 'correct' | 'wrong') => {
 };
 
 export default function PlayerGame() {
-  const { error: toastError } = useToast();
+  const { error: toastError, success: toastSuccess } = useToast();
   const { gameId } = useParams<{ gameId: string }>();
   const navigate = useNavigate();
   const [gameState, setGameState] = useState<GameState | null>(null);
@@ -59,6 +67,18 @@ export default function PlayerGame() {
   const [jokerLoading, setJokerLoading] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('blindtest_sound_enabled') !== 'false');
   const [hapticEnabled, setHapticEnabled] = useState(() => localStorage.getItem('blindtest_haptic_enabled') !== 'false');
+  const [profileNickname, setProfileNickname] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+  const [showProfilePrompt, setShowProfilePrompt] = useState(false);
+  const [profilePreviewBadges, setProfilePreviewBadges] = useState<string[]>([]);
+  const [textAnswerDraft, setTextAnswerDraft] = useState('');
+  const [sendingTextAnswer, setSendingTextAnswer] = useState(false);
+  // WebRTC mic
+  const [micActive, setMicActive] = useState(false);
+  const [micError, setMicError] = useState('');
+  const playerPeerRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     if (!gameId) return;
@@ -68,6 +88,11 @@ export default function PlayerGame() {
     const playerSecret = localStorage.getItem('blindtest_player_secret');
     const savedName = localStorage.getItem('blindtest_player_name');
     const savedTeam = localStorage.getItem('blindtest_player_team');
+    const publicId =
+      localStorage.getItem('blindtest_player_public_id') ||
+      `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem('blindtest_player_public_id', publicId);
+    setProfileNickname(localStorage.getItem('blindtest_profile_nickname') || savedName || '');
     
     if (!playerId || !playerSecret || !savedName) {
       navigate('/');
@@ -103,6 +128,7 @@ export default function PlayerGame() {
         gameId, 
         playerId, 
         playerSecret,
+        publicId,
         name: savedName,
         team: savedTeam || undefined
       }, (res: any) => {
@@ -122,6 +148,70 @@ export default function PlayerGame() {
     socket.on('player:kicked', handleForcedQuit);
     socket.on('player:forceLogout', handleForcedQuit);
 
+    // ── WebRTC mic: host requests mic ──────────────────────────────────────
+    const startMicSession = async () => {
+      setMicError('');
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        localStreamRef.current = stream;
+
+        const pc = new RTCPeerConnection(RTC_CONFIG);
+        playerPeerRef.current = pc;
+
+        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+        pc.onicecandidate = (e) => {
+          if (e.candidate) {
+            socket.emit('player:micIceCandidate', { gameId, playerId, candidate: e.candidate }, () => {});
+          }
+        };
+
+        pc.onconnectionstatechange = () => {
+          if (pc.connectionState === 'connected') setMicActive(true);
+          if (['disconnected', 'closed', 'failed'].includes(pc.connectionState)) stopMicSession();
+        };
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('player:micOffer', { gameId, playerId, sdp: pc.localDescription }, () => {});
+        setMicActive(true);
+      } catch (err: any) {
+        setMicError(err.name === 'NotAllowedError' ? 'Accès micro refusé' : 'Impossible d\'activer le micro');
+        setMicActive(false);
+      }
+    };
+
+    const stopMicSession = () => {
+      localStreamRef.current?.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+      playerPeerRef.current?.close();
+      playerPeerRef.current = null;
+      setMicActive(false);
+      setMicError('');
+    };
+
+    const handleRequestPlayerMic = () => {
+      void startMicSession();
+    };
+
+    const handleMicAnswer = ({ sdp }: { sdp: RTCSessionDescriptionInit }) => {
+      playerPeerRef.current?.setRemoteDescription(new RTCSessionDescription(sdp)).catch(() => {});
+    };
+
+    const handleMicIceCandidate = ({ candidate }: { candidate: RTCIceCandidateInit }) => {
+      playerPeerRef.current?.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+    };
+
+    const handleMicStop = () => {
+      stopMicSession();
+      socket.emit('player:micStopped', { gameId, playerId }, () => {});
+    };
+
+    socket.on('host:requestPlayerMic', handleRequestPlayerMic);
+    socket.on('player:micAnswer', handleMicAnswer);
+    socket.on('player:micIceCandidate', handleMicIceCandidate);
+    socket.on('player:micStop', handleMicStop);
+
     // Initial fetch of state if we are already connected
     if (socket.connected) {
       joinGame();
@@ -133,8 +223,43 @@ export default function PlayerGame() {
       socket.off('player:kicked', handleForcedQuit);
       socket.off('player:forceLogout', handleForcedQuit);
       socket.off('connect', joinGame);
+      socket.off('host:requestPlayerMic', handleRequestPlayerMic);
+      socket.off('player:micAnswer', handleMicAnswer);
+      socket.off('player:micIceCandidate', handleMicIceCandidate);
+      socket.off('player:micStop', handleMicStop);
+      stopMicSession();
     };
   }, [gameId, navigate, soundEnabled, hapticEnabled]);
+
+  const handleClaimProfile = async () => {
+    if (!gameState || !player || !gameId) return;
+    const publicId = localStorage.getItem('blindtest_player_public_id');
+    const nickname = profileNickname.trim();
+    if (!publicId || !nickname) {
+      toastError('Pseudo requis');
+      return;
+    }
+    setSavingProfile(true);
+    try {
+      await api.playerProfiles.claim({
+        publicId,
+        nickname,
+        gameId,
+        playerName: player.name,
+        score: player.score,
+        buzzes: player.stats?.buzzes || 0,
+        correctAnswers: player.stats?.correctAnswers || 0,
+        wrongAnswers: player.stats?.wrongAnswers || 0,
+      });
+      localStorage.setItem('blindtest_profile_nickname', nickname);
+      setProfileSaved(true);
+      toastSuccess('Profil sauvegardé');
+    } catch (error) {
+      toastError((error as Error).message || 'Erreur sauvegarde profil');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   const handleBuzz = () => {
     if (gameState?.status === 'playing' && player && !player.lockedOut) {
@@ -161,14 +286,42 @@ export default function PlayerGame() {
     });
   };
 
+  const handleSubmitTextAnswer = () => {
+    if (!player || !gameId) return;
+    const answer = textAnswerDraft.trim();
+    if (!answer) return;
+    setSendingTextAnswer(true);
+    socket.emit('player:submitTextAnswer', { gameId, playerId: player.id, answer }, (res: any) => {
+      setSendingTextAnswer(false);
+      if (!res?.success) {
+        toastError(res?.error || 'Envoi impossible');
+        return;
+      }
+      setTextAnswerDraft('');
+      toastSuccess('Réponse envoyée');
+    });
+  };
+
   useEffect(() => {
     if (gameState?.status !== 'finished') return;
+    setShowProfilePrompt(true);
     localStorage.removeItem('blindtest_last_game_id');
     const timeout = window.setTimeout(() => {
       navigate('/');
     }, 10000);
     return () => window.clearTimeout(timeout);
   }, [gameState?.status, navigate]);
+
+  useEffect(() => {
+    if (!player) return;
+    const predictedBadges: string[] = [];
+    const totalCorrect = Number(player.stats?.correctAnswers || 0);
+    const totalWrong = Number(player.stats?.wrongAnswers || 0);
+    if (totalCorrect >= 8) predictedBadges.push('oreille d\'or');
+    if (totalCorrect >= 3 && totalWrong <= 1) predictedBadges.push('sniper');
+    if (player.score >= 10) predictedBadges.push('top score');
+    setProfilePreviewBadges(predictedBadges);
+  }, [player]);
 
   if (!gameState || !player) {
     return (
@@ -207,6 +360,10 @@ export default function PlayerGame() {
   ).sort((a, b) => b[1] - a[1]);
   const myTeamRank = player.team ? rankedTeams.findIndex(([teamId]) => teamId === player.team) + 1 : 0;
   const myTeamName = player.team ? (gameState.teamConfig?.find((team) => team.id === player.team)?.name || player.team) : '';
+  const currentRound = (gameState.rounds || []).find(
+    (round) => gameState.currentTrackIndex >= round.startIndex && gameState.currentTrackIndex <= round.endIndex,
+  );
+  const textModeEnabled = Boolean(currentRound?.textAnswersEnabled);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-6 relative overflow-hidden app-shell">
@@ -241,6 +398,34 @@ export default function PlayerGame() {
             {gameState.status === 'finished' && 'Partie terminée'}
           </p>
         </div>
+
+        {/* Mic active indicator */}
+        {micActive && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full bg-red-500/15 border border-red-500/40 rounded-2xl px-5 py-4 flex items-center gap-3"
+          >
+            <div className="relative flex-shrink-0">
+              <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
+                <svg className="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 1a4 4 0 0 0-4 4v7a4 4 0 0 0 8 0V5a4 4 0 0 0-4-4zm0 2a2 2 0 0 1 2 2v7a2 2 0 0 1-4 0V5a2 2 0 0 1 2-2zm-7 8a7 7 0 0 0 14 0h-2a5 5 0 0 1-10 0H5zm7 8v2h-2v-2a9 9 0 0 0 2 0z"/>
+                </svg>
+              </div>
+              <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-red-500 rounded-full animate-ping" />
+              <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-red-500 rounded-full" />
+            </div>
+            <div>
+              <p className="text-red-300 font-semibold text-sm">Micro activé</p>
+              <p className="text-red-400/70 text-xs">L&apos;animateur vous écoute — parlez normalement</p>
+            </div>
+          </motion.div>
+        )}
+        {micError && (
+          <div className="w-full bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 text-amber-400 text-sm text-center">
+            {micError}
+          </div>
+        )}
 
         {/* Main action / end screen */}
         {gameState.status === 'finished' ? (
@@ -279,6 +464,67 @@ export default function PlayerGame() {
               </div>
             </div>
             <div className="flex flex-col gap-2">
+              {showProfilePrompt && (
+                <div className="bg-zinc-900 border border-indigo-500/30 rounded-lg p-3 text-left">
+                  <p className="text-xs text-zinc-400 mb-1 uppercase tracking-wider">Profil joueur (optionnel)</p>
+                  <p className="text-sm text-zinc-200 mb-3">
+                    Sauvegarde ton pseudo pour garder ton historique et tes badges entre les soirées.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 mb-3 text-xs">
+                    <div className="bg-zinc-800 rounded p-2 border border-white/10">
+                      <p className="text-zinc-500">Score partie</p>
+                      <p className="font-semibold text-indigo-300">{player.score} pts</p>
+                    </div>
+                    <div className="bg-zinc-800 rounded p-2 border border-white/10">
+                      <p className="text-zinc-500">Réussite</p>
+                      <p className="font-semibold text-indigo-300">
+                        {player.stats?.buzzes ? Math.round(((player.stats?.correctAnswers || 0) / player.stats.buzzes) * 100) : 0}%
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mb-3">
+                    <p className="text-xs text-zinc-500 mb-1">Badges potentiels</p>
+                    <div className="flex flex-wrap gap-2">
+                      {profilePreviewBadges.length === 0 && <span className="text-xs text-zinc-500">Continue à jouer pour débloquer des badges</span>}
+                      {profilePreviewBadges.map((badge) => (
+                        <span key={badge} className="text-xs bg-indigo-600/20 border border-indigo-500/30 rounded-full px-2.5 py-1 text-indigo-200">
+                          {badge}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={profileNickname}
+                      onChange={(e) => setProfileNickname(e.target.value)}
+                      placeholder="Ton pseudo"
+                      className="flex-1 bg-zinc-800 border border-white/10 rounded px-2 py-2 text-sm"
+                    />
+                    <button
+                      onClick={() => void handleClaimProfile()}
+                      disabled={savingProfile || profileSaved}
+                      className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded px-3 py-2 text-xs font-medium"
+                    >
+                      {profileSaved ? 'Sauvé' : savingProfile ? 'Sauvegarde...' : 'Sauvegarder'}
+                    </button>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between">
+                    <button
+                      onClick={() => navigate(`/player/profile/${encodeURIComponent(localStorage.getItem('blindtest_player_public_id') || '')}`)}
+                      className="text-xs text-indigo-300 hover:text-indigo-200"
+                    >
+                      Voir mon profil
+                    </button>
+                    <button
+                      onClick={() => setShowProfilePrompt(false)}
+                      className="text-xs text-zinc-500 hover:text-zinc-300"
+                    >
+                      Plus tard
+                    </button>
+                  </div>
+                </div>
+              )}
               <button
                 onClick={() => navigate('/')}
                 className="bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg py-2.5 text-sm font-medium"
@@ -355,6 +601,37 @@ export default function PlayerGame() {
               {player.lockedOut ? 'Bloqué' : isMyBuzz ? 'BUZZ !' : 'BUZZ'}
             </span>
           </motion.button>
+        )}
+
+        {gameState.status !== 'finished' && (
+          <div className="w-full bg-zinc-900/80 border border-white/10 rounded-2xl p-4">
+            <p className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Question ouverte</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                maxLength={200}
+                value={textAnswerDraft}
+                onChange={(e) => setTextAnswerDraft(e.target.value)}
+                placeholder="Ta réponse texte..."
+                className="flex-1 bg-zinc-800 border border-white/10 rounded-lg px-3 py-2 text-sm"
+              />
+              <button
+                onClick={handleSubmitTextAnswer}
+                disabled={
+                  sendingTextAnswer ||
+                  textAnswerDraft.trim().length === 0 ||
+                  !['playing', 'paused'].includes(gameState.status) ||
+                  !textModeEnabled
+                }
+                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-lg px-3 py-2 text-xs font-medium"
+              >
+                {sendingTextAnswer ? '...' : 'Envoyer'}
+              </button>
+            </div>
+            {!textModeEnabled && (
+              <p className="text-[11px] text-zinc-500 mt-2">L'animateur n'a pas activé la question ouverte pour cette manche.</p>
+            )}
+          </div>
         )}
 
         {gameState.status !== 'finished' && gameState.enableBonuses !== false && (

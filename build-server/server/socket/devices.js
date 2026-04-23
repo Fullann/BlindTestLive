@@ -92,6 +92,9 @@ function registerDeviceHandlers(ctx) {
                 lastSeenAt: Date.now(),
                 speakerEnabled: existing.speakerEnabled ?? true,
                 speakerMuted: existing.speakerMuted ?? false,
+                sensitivity: existing.sensitivity ?? 5,
+                ledStyle: existing.ledStyle ?? "classic",
+                soundStyle: existing.soundStyle ?? "default",
             };
             persistGame(game);
             emitHardwareUpdate(ctx, game.id);

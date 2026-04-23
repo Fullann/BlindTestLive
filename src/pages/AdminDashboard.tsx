@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../context/ToastContext';
 import { socket } from '../lib/socket';
 import { BlindTestSession, Playlist, Track, MediaType } from '../types';
-import { Plus, Trash2, Play, Music, LogOut, Youtube, Edit, Flag, Upload, Mic, Film, Image as ImageIcon, Type, Link, Settings2, Cpu, BookOpen } from 'lucide-react';
+import { Plus, Trash2, Play, Music, LogOut, Youtube, Edit, Flag, Upload, Mic, Film, Image as ImageIcon, Type, Link, Settings2, Cpu, BookOpen, Trophy, LayoutDashboard, Rocket, Activity, Moon, Sun } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
 const THEME_PRESETS = [
@@ -74,6 +75,7 @@ function rowToBlindTest(row: any): BlindTestSession {
 
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const { success: toastSuccess, error: toastError, info: toastInfo, warning: toastWarning } = useToast();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [blindTests, setBlindTests] = useState<BlindTestSession[]>([]);
@@ -85,17 +87,71 @@ export default function AdminDashboard() {
   const [publicPlaylists, setPublicPlaylists] = useState<Playlist[]>([]);
   const [playlistSearch, setPlaylistSearch] = useState('');
   const [serverMetrics, setServerMetrics] = useState<{ activeGames: number; activeSockets: number; eventsTotal: number; gamesCreated: number } | null>(null);
+  const [sessionStats, setSessionStats] = useState<{
+    overview: {
+      totalSessions: number;
+      finishedSessions: number;
+      activeSessions: number;
+      avgSessionDurationMs: number;
+      avgResponseMs: number;
+      totalBuzzes: number;
+      totalCorrect: number;
+      totalWrong: number;
+    };
+    topFastPlayers: Array<{ id: string; name: string; buzzes: number; avgResponseMs: number }>;
+    topFastTracks: Array<{
+      trackIndex: number;
+      title: string;
+      artist: string;
+      fastestBuzzMs?: number;
+      revealedWithoutAnswer: number;
+      wrongAnswers: number;
+      totalBuzzes: number;
+      correctAnswers: number;
+    }>;
+    topHardTracks: Array<{
+      trackIndex: number;
+      title: string;
+      artist: string;
+      fastestBuzzMs?: number;
+      revealedWithoutAnswer: number;
+      wrongAnswers: number;
+      totalBuzzes: number;
+      correctAnswers: number;
+    }>;
+    coverage: {
+      sessionsWithRealtimeStats: number;
+      totalSessions: number;
+    };
+  } | null>(null);
+  const [tournaments, setTournaments] = useState<any[]>([]);
+  const [newTournamentName, setNewTournamentName] = useState('');
+  const [selectedTournamentId, setSelectedTournamentId] = useState('');
+  const [tournamentLeaderboard, setTournamentLeaderboard] = useState<any[] | null>(null);
+  const [selectedBrandingBlindtestId, setSelectedBrandingBlindtestId] = useState('');
+  const [brandingDraft, setBrandingDraft] = useState({
+    clientName: '',
+    logoUrl: '',
+    primaryColor: '#6366f1',
+    accentColor: '#a855f7',
+  });
+  const [brandingReport, setBrandingReport] = useState<any | null>(null);
 
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
   const [wizardName, setWizardName] = useState('');
   const [wizardThemePrompt, setWizardThemePrompt] = useState('');
   const [wizardTracks, setWizardTracks] = useState<Track[]>([]);
+  const [wizardDefaultQuestionType, setWizardDefaultQuestionType] = useState<'auto' | MediaType>('auto');
+  const [wizardDefaultDuration, setWizardDefaultDuration] = useState(20);
+  const [wizardImageRevealMode, setWizardImageRevealMode] = useState<'none' | 'blur'>('none');
+  const [wizardImageRevealDuration, setWizardImageRevealDuration] = useState(15);
   const [wizardBusy, setWizardBusy] = useState(false);
   const [wizardError, setWizardError] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [wizardPreviewTrackId, setWizardPreviewTrackId] = useState<string | null>(null);
   const [blindTestsTab, setBlindTestsTab] = useState<'active' | 'finished'>('active');
   const [showLaunchModal, setShowLaunchModal] = useState(false);
+  const [adminTab, setAdminTab] = useState<'sessions' | 'lancer' | 'stats' | 'business'>('sessions');
   const [pendingPlaylistLaunch, setPendingPlaylistLaunch] = useState<Playlist | null>(null);
   const [pendingYoutubeLaunch, setPendingYoutubeLaunch] = useState<{ videoId: string; sourceUrl: string } | null>(null);
   const [launchOptions, setLaunchOptions] = useState({
@@ -107,6 +163,7 @@ export default function AdminDashboard() {
     onboardingEnabled: true,
     tutorialSeconds: 10,
     tournamentMode: false,
+    strictTimerEnabled: false,
     rules: {
       wrongAnswerPenalty: -1,
       progressiveLock: true,
@@ -128,15 +185,24 @@ export default function AdminDashboard() {
 
     const loadData = async () => {
       try {
-        const [playlistsRes, blindTestsRes, publicPlaylistsRes] = await Promise.all([
+        const [playlistsRes, blindTestsRes, publicPlaylistsRes, tournamentsRes] = await Promise.all([
           api.playlists.list(),
           api.blindtests.list(),
           api.playlists.listPublic(),
+          api.events.listTournaments().catch(() => ({ tournaments: [] })),
         ]);
         if (!active) return;
         setPlaylists((playlistsRes.playlists || []).map(rowToPlaylist));
         setBlindTests((blindTestsRes.blindtests || []).map(rowToBlindTest));
         setPublicPlaylists((publicPlaylistsRes.playlists || []).map(rowToPlaylist));
+        setTournaments(tournamentsRes.tournaments || []);
+        try {
+          const statsRes = await api.blindtests.stats();
+          if (!active) return;
+          setSessionStats(statsRes);
+        } catch {
+          // stats optionnelles
+        }
       } catch (err) {
         console.error('Erreur chargement données', err);
       } finally {
@@ -230,6 +296,88 @@ export default function AdminDashboard() {
     return 20;
   };
 
+  const formatMsToSeconds = (value?: number) => {
+    if (typeof value !== 'number') return 'n/a';
+    return `${(value / 1000).toFixed(2)}s`;
+  };
+
+  const formatDuration = (ms: number) => {
+    if (!ms || ms <= 0) return 'n/a';
+    const totalSec = Math.round(ms / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    return `${min}m ${String(sec).padStart(2, '0')}s`;
+  };
+
+  const handleCreateTournament = async () => {
+    if (!newTournamentName.trim()) return;
+    try {
+      const { tournament } = await api.events.createTournament({ name: newTournamentName.trim() });
+      setTournaments((prev) => [tournament, ...prev]);
+      setNewTournamentName('');
+      toastSuccess('Tournoi créé');
+    } catch (error) {
+      toastError((error as Error).message || 'Erreur création tournoi');
+    }
+  };
+
+  const handleAttachSessionToTournament = async (tournamentId: string, blindtestId: string) => {
+    try {
+      await api.events.attachSessionToTournament(tournamentId, blindtestId);
+      toastSuccess('Session ajoutée au tournoi');
+      if (selectedTournamentId === tournamentId) {
+        const res = await api.events.getTournamentLeaderboard(tournamentId);
+        setTournamentLeaderboard(res.leaderboard || []);
+      }
+    } catch (error) {
+      toastError((error as Error).message || 'Erreur association session/tournoi');
+    }
+  };
+
+  const handleLoadTournamentLeaderboard = async (tournamentId: string) => {
+    if (!tournamentId) return;
+    setSelectedTournamentId(tournamentId);
+    try {
+      const res = await api.events.getTournamentLeaderboard(tournamentId);
+      setTournamentLeaderboard(res.leaderboard || []);
+    } catch (error) {
+      toastError((error as Error).message || 'Erreur chargement classement tournoi');
+    }
+  };
+
+  const handleLoadBranding = async (blindtestId: string) => {
+    if (!blindtestId) return;
+    setSelectedBrandingBlindtestId(blindtestId);
+    setBrandingReport(null);
+    try {
+      const [{ branding }, report] = await Promise.all([
+        api.events.getBranding(blindtestId),
+        api.events.getReport(blindtestId),
+      ]);
+      setBrandingDraft({
+        clientName: branding?.client_name || '',
+        logoUrl: branding?.logo_url || '',
+        primaryColor: branding?.primary_color || '#6366f1',
+        accentColor: branding?.accent_color || '#a855f7',
+      });
+      setBrandingReport(report);
+    } catch (error) {
+      toastError((error as Error).message || 'Erreur chargement branding/report');
+    }
+  };
+
+  const handleSaveBranding = async () => {
+    if (!selectedBrandingBlindtestId) return;
+    try {
+      await api.events.saveBranding(selectedBrandingBlindtestId, brandingDraft);
+      toastSuccess('Branding sauvegardé');
+      const report = await api.events.getReport(selectedBrandingBlindtestId);
+      setBrandingReport(report);
+    } catch (error) {
+      toastError((error as Error).message || 'Erreur sauvegarde branding');
+    }
+  };
+
   const createPlaylistFromWizard = async (tracks: Track[]): Promise<string> => {
     if (!user) throw new Error('Utilisateur non connecté');
     const name = wizardName.trim() || `BlindTest ${new Date().toLocaleDateString('fr-FR')}`;
@@ -267,14 +415,23 @@ export default function AdminDashboard() {
   };
 
   const addManualTrack = () => {
+    const mediaType: Track['mediaType'] = wizardDefaultQuestionType === 'auto' ? 'audio' : wizardDefaultQuestionType;
+    const imageDefaults =
+      mediaType === 'image'
+        ? {
+            imageRevealMode: wizardImageRevealMode,
+            imageRevealDuration: wizardImageRevealDuration,
+          }
+        : {};
     const newTrack: Track = {
       id: uuidv4(),
       title: '',
       artist: '',
-      mediaType: 'youtube',
+      mediaType,
       mediaUrl: '',
-      duration: getDefaultDurationByDifficulty(launchOptions.difficulty),
+      duration: wizardDefaultDuration,
       startTime: 0,
+      ...imageDefaults,
     };
     setWizardTracks((prev) => [...prev, newTrack]);
   };
@@ -298,13 +455,21 @@ export default function AdminDashboard() {
       const uploadedTracks: Track[] = [];
       for (const file of list) {
         const { url } = await api.playlists.upload('wizard', file);
-        const mediaType: Track['mediaType'] = file.type.startsWith('audio/')
+        const detectedMediaType: Track['mediaType'] = file.type.startsWith('audio/')
           ? 'audio'
           : file.type.startsWith('video/')
             ? 'video'
             : file.type.startsWith('image/')
               ? 'image'
               : 'url';
+        const mediaType = wizardDefaultQuestionType === 'auto' ? detectedMediaType : wizardDefaultQuestionType;
+        const imageDefaults =
+          mediaType === 'image'
+            ? {
+                imageRevealMode: wizardImageRevealMode,
+                imageRevealDuration: wizardImageRevealDuration,
+              }
+            : {};
         uploadedTracks.push({
           id: uuidv4(),
           title: file.name.replace(/\.[^.]+$/, ''),
@@ -312,8 +477,9 @@ export default function AdminDashboard() {
           mediaType,
           mediaUrl: url,
           url,
-          duration: getDefaultDurationByDifficulty(launchOptions.difficulty),
+          duration: wizardDefaultDuration,
           startTime: 0,
+          ...imageDefaults,
         });
       }
       setWizardTracks((prev) => [...prev, ...uploadedTracks]);
@@ -345,6 +511,10 @@ export default function AdminDashboard() {
       setWizardName('');
       setWizardThemePrompt('');
       setWizardTracks([]);
+      setWizardDefaultQuestionType('auto');
+      setWizardDefaultDuration(getDefaultDurationByDifficulty(launchOptions.difficulty));
+      setWizardImageRevealMode('none');
+      setWizardImageRevealDuration(15);
     } catch (error) {
       setWizardError((error as Error).message || 'Erreur création');
     } finally {
@@ -526,779 +696,504 @@ export default function AdminDashboard() {
     return <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">Chargement...</div>;
   }
 
-  const previewTrack = wizardTracks.find((t) => t.id === wizardPreviewTrackId) || wizardTracks[0];
-  const activeBlindTests = blindTests.filter((session) => session.status === 'active');
-  const finishedBlindTests = blindTests.filter((session) => session.status === 'finished');
-  const visibleBlindTests = blindTestsTab === 'active' ? activeBlindTests : finishedBlindTests;
+  const activeBlindTests = blindTests.filter((s) => s.status === 'active');
+  const finishedBlindTests = blindTests.filter((s) => s.status === 'finished');
+  const totalTracks = playlists.reduce((sum, p) => sum + (p.tracks?.length || 0), 0);
+
+  const getPlaylistTypeBadge = (playlist: Playlist) => {
+    const types = new Set((playlist.tracks || []).map((t) => t.mediaType || 'audio'));
+    const badges: string[] = [];
+    if (types.has('audio')) badges.push('Audio');
+    if (types.has('video')) badges.push('Vidéo');
+    if (types.has('image')) badges.push('Image');
+    if (types.has('youtube')) badges.push('YouTube');
+    if (types.has('text')) badges.push('Texte');
+    if (badges.length === 0) badges.push('Buzz');
+    return badges.slice(0, 2);
+  };
+
+  const TABS: Array<{ id: 'sessions' | 'lancer' | 'stats' | 'business'; label: string; badge?: number }> = [
+    { id: 'sessions', label: 'Sessions', badge: activeBlindTests.length > 0 ? activeBlindTests.length : undefined },
+    { id: 'lancer', label: 'Lancer une partie' },
+    { id: 'stats', label: 'Stats' },
+    { id: 'business', label: 'Business' },
+  ];
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white p-6 md:p-8 app-shell">
-      <div className="max-w-5xl mx-auto">
-
-        <div className="flex items-center justify-between mb-10">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Espace Animateur</h1>
-            <p className="text-zinc-400 mt-1">Dashboard simplifié pour créer et lancer rapidement</p>
+    <div className="min-h-screen bg-zinc-950 text-white app-shell">
+      {/* ── Header ── */}
+      <header className="sticky top-0 z-20 bg-zinc-950/90 backdrop-blur border-b border-white/5 px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center">
+            <Music className="w-4 h-4 text-white" />
           </div>
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => navigate('/admin/hardware')}
-              className="bg-zinc-900 hover:bg-zinc-800 border border-white/10 rounded-xl px-4 py-2 text-sm flex items-center gap-2"
-            >
-              <Cpu className="w-4 h-4" />
-              Matériel
-            </button>
-            <button
-              onClick={() => navigate('/admin/hardware/tutorial')}
-              className="bg-zinc-900 hover:bg-zinc-800 border border-white/10 rounded-xl px-4 py-2 text-sm flex items-center gap-2"
-            >
-              <BookOpen className="w-4 h-4" />
-              Tuto buzzer
-            </button>
-            <button
-              onClick={() => navigate('/admin/settings')}
-              className="bg-zinc-900 hover:bg-zinc-800 border border-white/10 rounded-xl px-4 py-2 text-sm flex items-center gap-2"
-            >
-              <Settings2 className="w-4 h-4" />
-              Paramètres
-            </button>
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-2 text-zinc-400 hover:text-white transition-colors text-sm"
-            >
-              <LogOut className="w-4 h-4" />
-              Déconnexion
-            </button>
+          <div>
+            <span className="font-black text-base tracking-tight">BlindTest<span className="text-indigo-400">Live</span></span>
+            <span className="ml-2 text-xs text-zinc-500">{user?.email}</span>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => navigate('/admin/hardware')} className="text-xs text-zinc-500 hover:text-zinc-300 border border-white/10 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-colors">
+            <Cpu className="w-3.5 h-3.5" />Matériel
+          </button>
+          <button onClick={() => navigate('/admin/settings')} className="text-xs text-zinc-500 hover:text-zinc-300 border border-white/10 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-colors">
+            <Settings2 className="w-3.5 h-3.5" />Paramètres
+          </button>
+          <button onClick={toggleTheme} className="text-xs text-zinc-500 hover:text-zinc-300 border border-white/10 rounded-lg p-1.5 transition-colors" title="Changer de thème">
+            {theme === 'light' ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
+          </button>
+          <button onClick={handleLogout} className="text-xs text-zinc-500 hover:text-red-400 border border-white/10 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-colors">
+            <LogOut className="w-3.5 h-3.5" />Déconnexion
+          </button>
+        </div>
+      </header>
 
-        {/* Metrics */}
-        {serverMetrics && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
-            {[
-              { label: 'Parties actives', value: serverMetrics.activeGames },
-              { label: 'Sockets actifs', value: serverMetrics.activeSockets },
-              { label: 'Events total', value: serverMetrics.eventsTotal },
-              { label: 'Parties créées', value: serverMetrics.gamesCreated },
-            ].map(({ label, value }) => (
-              <div key={label} className="bg-zinc-900 border border-white/10 rounded-xl p-4">
-                <p className="text-xs text-zinc-500 uppercase">{label}</p>
-                <p className="text-2xl font-bold">{value}</p>
-              </div>
-            ))}
-          </div>
-        )}
+      <div className="max-w-5xl mx-auto px-6 py-8">
 
-        {/* Wizard Création */}
-        <div className="bg-zinc-900 rounded-2xl border border-white/5 p-6 mb-8 app-card">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="text-xl font-semibold">Créer un Blind Test</h2>
-            <div className="flex gap-1">
-              {([1, 2, 3] as const).map((s) => (
-                <div key={s} className={`w-2 h-2 rounded-full ${wizardStep >= s ? 'bg-indigo-500' : 'bg-zinc-700'}`} />
-              ))}
+        {/* ── KPI Row ── */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+          {[
+            { label: 'Sessions actives', value: activeBlindTests.length, color: activeBlindTests.length > 0 ? 'text-emerald-400' : 'text-white' },
+            { label: 'Sessions terminées', value: finishedBlindTests.length, color: 'text-white' },
+            { label: 'Playlists', value: playlists.length, color: 'text-indigo-400' },
+            { label: 'Pistes au total', value: totalTracks, color: 'text-white' },
+          ].map((stat) => (
+            <div key={stat.label} className="bg-zinc-900 border border-white/8 rounded-2xl p-4 hover:border-white/15 transition-colors">
+              <p className="text-[11px] text-zinc-500 uppercase tracking-wider">{stat.label}</p>
+              <p className={`text-3xl font-black mt-1 ${stat.color}`}>{stat.value}</p>
             </div>
-          </div>
-          {wizardError && <div className="mb-4 bg-red-500/10 text-red-400 p-3 rounded-lg text-sm">{wizardError}</div>}
+          ))}
+        </div>
 
-          {wizardStep === 1 && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-1">Nom du blind test *</label>
-                <input
-                  type="text"
-                  value={wizardName}
-                  onChange={(e) => setWizardName(e.target.value)}
-                  placeholder="Ex: Blind Test Films & Séries"
-                  className="w-full bg-zinc-950 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-2">Thème / Catégorie</label>
-                <div className="flex flex-wrap gap-2">
-                  {THEME_PRESETS.map((preset) => (
-                    <button
-                      key={preset}
-                      type="button"
-                      onClick={() => setWizardThemePrompt(preset)}
-                      className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-                        wizardThemePrompt === preset
-                          ? 'bg-indigo-600/30 border-indigo-500/50 text-indigo-300'
-                          : 'border-white/15 bg-zinc-950 hover:bg-zinc-800 text-zinc-300'
-                      }`}
-                    >
-                      {preset}
-                    </button>
-                  ))}
+        {/* ── Tabs ── */}
+        <div className="flex items-center gap-1 bg-zinc-900 border border-white/8 rounded-2xl p-1.5 mb-8 w-fit">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setAdminTab(tab.id)}
+              className={`relative px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                adminTab === tab.id
+                  ? 'bg-indigo-600 text-white shadow'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+              }`}
+            >
+              {tab.label}
+              {tab.badge !== undefined && (
+                <span className="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500 text-white text-[10px] font-bold">
+                  {tab.badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* SESSIONS */}
+        {adminTab === 'sessions' && (
+          <div className="space-y-6">
+            <div className="bg-zinc-900 border border-white/8 rounded-2xl p-6">
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <h2 className="text-lg font-bold flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                    Sessions en cours
+                  </h2>
+                  <p className="text-xs text-zinc-500 mt-0.5">Parties actuellement actives</p>
                 </div>
-              </div>
-              <button
-                onClick={() => setWizardStep(2)}
-                disabled={!wizardName.trim()}
-                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-5 py-2 rounded-lg text-sm font-medium transition-colors"
-              >
-                Continuer →
-              </button>
-            </div>
-          )}
-
-          {wizardStep === 2 && (
-            <div className="space-y-5">
-              <p className="text-sm text-zinc-400">
-                Ajoutez vos pistes : <span className="text-white">uploadez des fichiers</span> (audio, vidéo, image, voix) ou <span className="text-white">collez des liens YouTube</span>.
-              </p>
-
-              <div
-                onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
-                onDragLeave={() => setDragActive(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragActive(false);
-                  void uploadWizardFiles(e.dataTransfer.files);
-                }}
-                className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
-                  dragActive ? 'border-indigo-400 bg-indigo-500/10' : 'border-white/15 bg-zinc-950 hover:border-white/30'
-                }`}
-              >
-                <Upload className="w-8 h-8 text-zinc-500 mx-auto mb-3" />
-                <p className="text-sm text-zinc-300 mb-1">Glisse-dépose tes fichiers ici</p>
-                <p className="text-xs text-zinc-500 mb-3">Audio (MP3, WAV), Vidéo (MP4), Image (JPG, PNG), Voix (WebM)</p>
-                <label className="inline-flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 cursor-pointer px-4 py-2 rounded-lg text-sm transition-colors">
-                  <Upload className="w-4 h-4" />
-                  Choisir des fichiers
-                  <input
-                    type="file"
-                    multiple
-                    accept="audio/*,video/*,image/*"
-                    onChange={(e) => e.target.files && void uploadWizardFiles(e.target.files)}
-                    className="hidden"
-                  />
-                </label>
-                {wizardBusy && <p className="text-xs text-indigo-400 mt-2">Upload en cours...</p>}
-              </div>
-
-              <div className="bg-zinc-950 border border-white/10 rounded-xl p-4">
-                <h3 className="text-sm font-medium text-zinc-300 mb-3 flex items-center gap-2">
-                  <Youtube className="w-4 h-4 text-red-400" />
-                  Ou ajoutez des pistes YouTube
-                </h3>
                 <button
-                  onClick={addManualTrack}
-                  className="text-sm bg-zinc-800 hover:bg-zinc-700 px-3 py-2 rounded-lg transition-colors flex items-center gap-2"
+                  onClick={() => setAdminTab('lancer')}
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
                 >
-                  <Plus className="w-4 h-4" />
-                  Ajouter une piste manuellement
+                  <Play className="w-4 h-4" />
+                  Lancer une partie
                 </button>
               </div>
-
-              {wizardTracks.length > 0 && (
-                <div className="bg-zinc-950 border border-white/10 rounded-xl p-3 space-y-2 max-h-60 overflow-y-auto">
-                  <p className="text-xs text-zinc-500 mb-2">{wizardTracks.length} piste(s) ajoutée(s)</p>
-                  {wizardTracks.map((t, i) => (
-                    <div key={t.id} className="flex items-center gap-2 bg-zinc-900 rounded p-2">
-                      <span className="text-xs text-zinc-500 w-5 text-right">{i + 1}</span>
-                      <span className="text-zinc-400">{MEDIA_TYPE_ICONS[t.mediaType || 'url']}</span>
-                      <span className="flex-1 text-xs truncate">{t.title || <span className="text-zinc-500">Sans titre</span>}</span>
-                      <button onClick={() => removeWizardTrack(t.id)} className="text-red-400 hover:text-red-300 p-1">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+              {activeBlindTests.length === 0 ? (
+                <div className="text-center py-10 space-y-3">
+                  <Flag className="w-10 h-10 text-zinc-700 mx-auto" />
+                  <p className="text-zinc-500 text-sm">Aucune partie en cours.</p>
+                  <button onClick={() => setAdminTab('lancer')} className="text-indigo-400 hover:text-indigo-300 text-sm transition-colors">
+                    Lancer une partie →
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {activeBlindTests.map((session) => (
+                    <div key={session.id} className="bg-zinc-950 border border-emerald-500/20 rounded-xl p-4 flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold">{session.title}</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-xs text-zinc-500">Code:</span>
+                          <code className="text-xs font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">{session.gameId}</code>
+                          <span className="text-xs text-zinc-600">{new Date(session.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => navigate(`/admin/game/${session.gameId}`)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors">
+                          Reprendre →
+                        </button>
+                        <button onClick={() => handleEndBlindTest(session)} disabled={endingSessionId === session.id} className="bg-red-600/15 hover:bg-red-600/25 disabled:opacity-50 text-red-400 px-3 py-2 rounded-xl text-xs border border-red-500/20 transition-colors">
+                          {endingSessionId === session.id ? 'Arrêt…' : 'Terminer'}
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
-
-              <div className="flex gap-3">
-                <button onClick={() => setWizardStep(1)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-lg text-sm">← Retour</button>
-                <button
-                  onClick={() => setWizardStep(3)}
-                  disabled={wizardTracks.length === 0}
-                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-4 py-2 rounded-lg text-sm"
-                >
-                  Réviser et lancer →
-                </button>
-              </div>
             </div>
-          )}
 
-          {wizardStep === 3 && (
-            <div className="space-y-4">
-              {(() => {
-                const quality = computeWizardQuality(wizardTracks);
-                return (
-                  <div className="bg-zinc-950 border border-white/10 rounded-xl p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-semibold">Qualité de la playlist</p>
-                      <span className={`text-lg font-bold ${quality.score >= 80 ? 'text-emerald-400' : quality.score >= 60 ? 'text-amber-400' : 'text-red-400'}`}>
-                        {quality.score}/100
-                      </span>
+            <div className="bg-zinc-900 border border-white/8 rounded-2xl p-6">
+              <h2 className="text-lg font-bold mb-5">Historique des parties</h2>
+              {finishedBlindTests.length === 0 ? (
+                <p className="text-zinc-500 text-sm text-center py-6">Aucune partie terminée pour l'instant.</p>
+              ) : (
+                <div className="space-y-2">
+                  {finishedBlindTests.slice(0, 20).map((session) => (
+                    <div key={session.id} className="bg-zinc-950 border border-white/5 rounded-xl p-3 flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-sm">{session.title}</p>
+                        <p className="text-xs text-zinc-500">
+                          {new Date(session.createdAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          {' · '}Code: <code className="font-mono">{session.gameId}</code>
+                        </p>
+                      </div>
+                      <span className="text-xs text-zinc-600 bg-zinc-800 border border-white/8 px-2 py-1 rounded-full">Terminée</span>
                     </div>
-                    <ul className="text-xs text-zinc-400 space-y-1">
-                      {quality.checks.map((c) => <li key={c}>• {c}</li>)}
-                    </ul>
-                  </div>
-                );
-              })()}
+                  ))}
+                </div>
+              )}
+            </div>
 
-              <div className="bg-zinc-950 border border-white/10 rounded-xl p-3 max-h-80 overflow-y-auto space-y-2">
-                {wizardTracks.length === 0 && <p className="text-xs text-zinc-500">Aucune piste.</p>}
-                {wizardTracks.map((track, index) => (
-                  <div key={track.id} className="bg-zinc-900 rounded-lg p-3 space-y-2">
-                    <div className="grid grid-cols-12 gap-2 items-center">
-                      <span className="col-span-1 text-xs text-zinc-500">{index + 1}</span>
-                      <div className="col-span-4">
-                        <input
-                          value={track.title}
-                          onChange={(e) => updateWizardTrack(track.id, { title: e.target.value })}
-                          placeholder="Titre"
-                          className="w-full bg-zinc-800 border border-white/10 rounded px-2 py-1 text-xs"
-                        />
-                      </div>
-                      <div className="col-span-3">
-                        <input
-                          value={track.artist}
-                          onChange={(e) => updateWizardTrack(track.id, { artist: e.target.value })}
-                          placeholder="Artiste / Film"
-                          className="w-full bg-zinc-800 border border-white/10 rounded px-2 py-1 text-xs"
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <input
-                          type="number"
-                          min={5}
-                          max={300}
-                          value={track.duration || 20}
-                          onChange={(e) => updateWizardTrack(track.id, { duration: Number(e.target.value) || 20 })}
-                          className="w-full bg-zinc-800 border border-white/10 rounded px-2 py-1 text-xs"
-                          title="Durée (s)"
-                        />
-                      </div>
-                      <div className="col-span-2 flex gap-1 justify-end">
-                        <button
-                          onClick={() => setWizardPreviewTrackId(track.id)}
-                          className="text-xs bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 rounded px-2 py-1"
-                        >
-                          ▶
-                        </button>
-                        <button
-                          onClick={() => removeWizardTrack(track.id)}
-                          className="text-xs bg-red-600/20 border border-red-500/30 text-red-300 rounded px-2 py-1"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </div>
-                    {(track.mediaType === 'youtube' || !track.mediaUrl) && (
-                      <input
-                        value={track.mediaUrl || ''}
-                        onChange={(e) => updateWizardTrack(track.id, { mediaUrl: e.target.value, url: e.target.value })}
-                        placeholder="URL YouTube (https://youtu.be/...)"
-                        className="w-full bg-zinc-800 border border-white/10 rounded px-2 py-1 text-xs"
-                      />
-                    )}
+            {serverMetrics && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { label: 'Parties actives serveur', value: serverMetrics.activeGames },
+                  { label: 'Sockets actifs', value: serverMetrics.activeSockets },
+                  { label: 'Événements traités', value: serverMetrics.eventsTotal },
+                  { label: 'Parties créées', value: serverMetrics.gamesCreated },
+                ].map(({ label, value }) => (
+                  <div key={label} className="bg-zinc-900 border border-white/8 rounded-xl p-4">
+                    <p className="text-[11px] text-zinc-500 uppercase tracking-wide">{label}</p>
+                    <p className="text-2xl font-black mt-1">{value}</p>
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+        )}
 
-              {previewTrack && (() => {
-                const source = previewTrack.mediaUrl || previewTrack.url || '';
-                return (
-                  <div className="bg-zinc-950 border border-white/10 rounded-lg p-3">
-                    <p className="text-xs text-zinc-500 mb-2">
-                      Préécoute: <span className="text-zinc-300">{previewTrack.title || 'Sans titre'}</span>
-                      {previewTrack.artist && <> — {previewTrack.artist}</>}
-                    </p>
-                    {(previewTrack.mediaType === 'audio' || previewTrack.mediaType === 'voice' || source.match(/\.(mp3|wav|ogg|webm)(\?|$)/i)) && (
-                      <audio controls src={source} className="w-full" />
-                    )}
-                    {(previewTrack.mediaType === 'video' || source.match(/\.(mp4|webm|mov)(\?|$)/i)) && (
-                      <video controls src={source} className="w-full max-h-48 rounded" />
-                    )}
-                    {(previewTrack.mediaType === 'youtube' || source.includes('youtube.com') || source.includes('youtu.be')) && source && (
-                      <iframe
-                        src={toYouTubeEmbedUrl(source)}
-                        className="w-full h-48 rounded border border-white/10"
-                        allow="autoplay; encrypted-media"
-                      />
-                    )}
-                    {previewTrack.mediaType === 'image' && source && (
-                      <img src={source} alt="preview" className="max-h-48 rounded mx-auto" />
-                    )}
-                    {previewTrack.mediaType === 'text' && (
-                      <div className="text-sm text-zinc-300 bg-zinc-900 rounded p-3">{previewTrack.textContent || 'Aucun texte'}</div>
-                    )}
-                  </div>
-                );
-              })()}
-
-              <div className="flex gap-3">
-                <button onClick={() => setWizardStep(2)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-lg text-sm">← Retour</button>
-                <button
-                  onClick={() => void finalizeWizard()}
-                  disabled={wizardBusy}
-                  className="bg-emerald-600 hover:bg-emerald-500 px-5 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-                >
-                  {wizardBusy ? 'Création...' : 'Créer et lancer la partie'}
+        {/* LANCER */}
+        {adminTab === 'lancer' && (
+          <div className="space-y-8">
+            <div className="bg-zinc-900 border border-white/8 rounded-2xl p-6">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <h2 className="text-lg font-bold">Depuis une playlist</h2>
+                  <p className="text-xs text-zinc-500 mt-0.5">Chaque carte indique le type de contenu et ce qu'on attend des joueurs.</p>
+                </div>
+                <button onClick={() => navigate('/playlists')} className="flex items-center gap-1.5 text-sm text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 rounded-xl px-3 py-2 transition-colors">
+                  <Plus className="w-3.5 h-3.5" />
+                  Gérer mes playlists
                 </button>
               </div>
-            </div>
-          )}
-        </div>
 
-        {/* Partie YouTube directe */}
-        <div className="bg-zinc-900 rounded-2xl border border-white/5 p-6 mb-8 app-card">
-          <h2 className="text-xl font-semibold flex items-center gap-2 mb-3">
-            <Youtube className="w-5 h-5 text-red-500" />
-            Partie YouTube (vidéo unique)
-          </h2>
-          <p className="text-zinc-400 mb-4 text-sm">
-            Collez le lien d'une vidéo YouTube (ex: blind test de 1h) — les joueurs buzzent pendant la vidéo.
-          </p>
-          <form onSubmit={handleLaunchYoutubeGame} className="flex gap-3">
-            <input
-              type="text"
-              value={youtubeUrl}
-              onChange={(e) => setYoutubeUrl(e.target.value)}
-              placeholder="https://www.youtube.com/watch?v=..."
-              className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-red-500"
-            />
-            <button
-              type="submit"
-              className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
-            >
-              <Play className="w-4 h-4" />
-              Lancer
-            </button>
-          </form>
-        </div>
-
-        {/* Bibliothèque partagée */}
-        {publicPlaylists.length > 0 && (
-          <div className="bg-zinc-900 rounded-2xl border border-white/5 p-6 mb-8 app-card">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold">Bibliothèque partagée</h2>
-              <input
-                type="text"
-                value={playlistSearch}
-                onChange={(e) => setPlaylistSearch(e.target.value)}
-                placeholder="Rechercher..."
-                className="bg-zinc-950 border border-white/10 rounded-lg px-4 py-2 text-sm w-64"
-              />
+              {playlists.length === 0 ? (
+                <div className="text-center py-12 space-y-3">
+                  <Music className="w-10 h-10 text-zinc-700 mx-auto" />
+                  <p className="text-zinc-500 text-sm">Aucune playlist. Crée-en une pour commencer.</p>
+                  <button onClick={() => navigate('/playlists')} className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-4 py-2 rounded-xl transition-colors">
+                    Créer une playlist
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+                  {playlists.map((playlist) => {
+                    const badges = getPlaylistTypeBadge(playlist);
+                    return (
+                      <div key={playlist.id} className="bg-zinc-950 border border-white/8 rounded-2xl p-4 flex flex-col gap-3 hover:border-white/15 transition-all">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold truncate">{playlist.name}</p>
+                            <p className="text-xs text-zinc-500 mt-0.5">{playlist.tracks.length} piste{playlist.tracks.length !== 1 ? 's' : ''}</p>
+                          </div>
+                          <div className="flex flex-wrap gap-1 justify-end flex-shrink-0">
+                            {badges.map((b) => (
+                              <span key={b} className="text-[10px] bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 px-2 py-0.5 rounded-full">{b}</span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => navigate(`/playlists/${playlist.id}`)} className="flex-1 text-xs text-zinc-500 hover:text-zinc-300 border border-white/8 hover:border-white/15 rounded-lg py-1.5 transition-all flex items-center justify-center gap-1">
+                            <Edit className="w-3.5 h-3.5" />Éditer
+                          </button>
+                          <button onClick={() => { setPendingPlaylistLaunch(playlist); setShowLaunchModal(true); }} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold py-2 rounded-xl flex items-center justify-center gap-1.5 transition-colors">
+                            <Play className="w-4 h-4" />Lancer
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-            <div className="grid gap-3">
-              {publicPlaylists
-                .filter((p) => `${p.name} ${(p.tracks || []).map((t) => `${t.title} ${t.artist}`).join(' ')}`.toLowerCase().includes(playlistSearch.toLowerCase()))
-                .slice(0, 8)
-                .map((playlist) => (
-                  <div key={playlist.id} className="bg-zinc-950 border border-white/5 rounded-xl p-4 flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">{playlist.name}</p>
-                      <p className="text-xs text-zinc-500">{playlist.tracks.length} pistes • public</p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setPendingPlaylistLaunch(playlist);
-                        setShowLaunchModal(true);
-                      }}
-                      className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-lg text-sm"
-                    >
-                      Lancer
-                    </button>
+
+            {publicPlaylists.length > 0 && (
+              <div className="bg-zinc-900 border border-white/8 rounded-2xl p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h2 className="text-lg font-bold">Bibliothèque partagée</h2>
+                    <p className="text-xs text-zinc-500 mt-0.5">Playlists publiées par la communauté</p>
                   </div>
-                ))}
+                  <input type="text" value={playlistSearch} onChange={(e) => setPlaylistSearch(e.target.value)} placeholder="Rechercher…" className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm w-48" />
+                </div>
+                <div className="space-y-2">
+                  {publicPlaylists.filter((p) => `${p.name} ${(p.tracks || []).map((t) => `${t.title} ${t.artist}`).join(' ')}`.toLowerCase().includes(playlistSearch.toLowerCase())).slice(0, 8).map((playlist) => (
+                    <div key={playlist.id} className="bg-zinc-950 border border-white/5 rounded-xl p-4 flex items-center justify-between">
+                      <div>
+                        <p className="font-medium">{playlist.name}</p>
+                        <p className="text-xs text-zinc-500">{playlist.tracks.length} pistes · publique</p>
+                      </div>
+                      <button onClick={() => { setPendingPlaylistLaunch(playlist); setShowLaunchModal(true); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors">
+                        Lancer
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="bg-zinc-900 border border-white/8 rounded-2xl p-6">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-9 h-9 rounded-xl bg-red-600/20 flex items-center justify-center">
+                  <Youtube className="w-5 h-5 text-red-400" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold">Mode YouTube</h2>
+                  <p className="text-xs text-zinc-500">Colle un lien vers une vidéo — les joueurs buzzent dessus en live</p>
+                </div>
+              </div>
+              <form onSubmit={handleLaunchYoutubeGame} className="flex gap-3 mt-4">
+                <input type="text" value={youtubeUrl} onChange={(e) => setYoutubeUrl(e.target.value)} placeholder="https://www.youtube.com/watch?v=..." className="flex-1 bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-red-500 text-sm" />
+                <button type="submit" className="bg-red-600 hover:bg-red-500 text-white px-5 py-3 rounded-xl font-semibold transition-colors flex items-center gap-2 text-sm">
+                  <Play className="w-4 h-4" />Lancer
+                </button>
+              </form>
             </div>
           </div>
         )}
 
-        {/* Vos Blind Tests */}
-        <div className="bg-zinc-900 rounded-2xl border border-white/5 p-6 mb-8 app-card">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="text-xl font-semibold flex items-center gap-2">
-              <Flag className="w-5 h-5 text-amber-400" />
-              Vos Blind Tests
-            </h2>
-            <span className="text-sm text-zinc-500">{blindTests.length} session(s)</span>
-          </div>
-
-          <div className="inline-flex items-center gap-1 bg-zinc-950 border border-white/10 rounded-xl p-1 mb-4">
-            <button
-              onClick={() => setBlindTestsTab('active')}
-              className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
-                blindTestsTab === 'active'
-                  ? 'bg-emerald-600/25 text-emerald-300 border border-emerald-500/30'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              En cours ({activeBlindTests.length})
-            </button>
-            <button
-              onClick={() => setBlindTestsTab('finished')}
-              className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
-                blindTestsTab === 'finished'
-                  ? 'bg-indigo-600/25 text-indigo-300 border border-indigo-500/30'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              Terminés ({finishedBlindTests.length})
-            </button>
-          </div>
-
-          {visibleBlindTests.length === 0 ? (
-            <div className="text-center py-8 text-zinc-500">
-              {blindTestsTab === 'active' ? 'Aucun quiz en cours.' : 'Aucun quiz terminé.'}
-            </div>
-          ) : (
-            <div className="grid gap-2">
-              {visibleBlindTests.map((session) => (
-                <div key={session.id} className="bg-zinc-950 border border-white/5 rounded-xl p-3 flex items-center justify-between">
-                  <div>
-                    <p className="font-semibold text-sm">{session.title}</p>
-                    <p className="text-xs text-zinc-400">
-                      Mode: {session.mode} • Code: <span className="font-mono">{session.gameId}</span>
-                    </p>
-                    <p className="text-xs text-zinc-500 mt-1">
-                      {new Date(session.createdAt).toLocaleString('fr-FR')}
-                    </p>
+        {/* STATS */}
+        {adminTab === 'stats' && (
+          <div className="space-y-6">
+            {!sessionStats ? (
+              <div className="text-center py-16 text-zinc-500">
+                <Activity className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
+                <p>Pas encore de statistiques disponibles.</p>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-bold flex items-center gap-2">
+                    <Activity className="w-5 h-5 text-emerald-400" />
+                    Cockpit de performance
+                  </h2>
+                  <span className="text-xs text-zinc-500">{sessionStats.coverage.sessionsWithRealtimeStats}/{sessionStats.coverage.totalSessions} sessions avec données</span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    { label: 'Sessions totales', value: sessionStats.overview.totalSessions },
+                    { label: 'Durée moyenne', value: formatDuration(sessionStats.overview.avgSessionDurationMs) },
+                    { label: 'Temps de réponse moy.', value: formatMsToSeconds(sessionStats.overview.avgResponseMs) },
+                    { label: 'Buzz totaux', value: sessionStats.overview.totalBuzzes },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="bg-zinc-900 border border-white/8 rounded-2xl p-4">
+                      <p className="text-[11px] text-zinc-500 uppercase tracking-wide">{label}</p>
+                      <p className="text-2xl font-black mt-1">{value}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-zinc-900 border border-white/8 rounded-2xl p-5">
+                    <p className="text-xs text-zinc-500 uppercase tracking-wider mb-3">Top joueurs les + rapides</p>
+                    <div className="space-y-2">
+                      {sessionStats.topFastPlayers.length === 0 && <p className="text-xs text-zinc-600">Pas encore de données.</p>}
+                      {sessionStats.topFastPlayers.map((entry, i) => (
+                        <div key={entry.id} className="flex items-center justify-between text-sm">
+                          <div className="flex items-center gap-2"><span className="text-xs text-zinc-600 w-4">#{i + 1}</span><span className="text-zinc-200 truncate">{entry.name}</span></div>
+                          <span className="text-emerald-400 text-xs font-mono">{formatMsToSeconds(entry.avgResponseMs)}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className={`text-xs px-2 py-1 rounded-full border ${session.status === 'active' ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' : 'text-zinc-400 border-white/10 bg-zinc-800'}`}>
-                      {session.status === 'active' ? 'Active' : 'Terminée'}
-                    </span>
-                    {session.status === 'active' && (
-                      <>
-                        <button
-                          onClick={() => navigate(`/admin/game/${session.gameId}`)}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-xs font-medium"
-                        >
-                          Reprendre
-                        </button>
-                        <button
-                          onClick={() => handleEndBlindTest(session)}
-                          disabled={endingSessionId === session.id}
-                          className="bg-red-600/20 hover:bg-red-600/30 disabled:opacity-50 text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium border border-red-500/20"
-                        >
-                          {endingSessionId === session.id ? 'Arrêt...' : 'Terminer'}
-                        </button>
-                      </>
-                    )}
+                  <div className="bg-zinc-900 border border-white/8 rounded-2xl p-5">
+                    <p className="text-xs text-zinc-500 uppercase tracking-wider mb-3">Musiques trouvées le + vite</p>
+                    <div className="space-y-2">
+                      {sessionStats.topFastTracks.length === 0 && <p className="text-xs text-zinc-600">Pas encore de données.</p>}
+                      {sessionStats.topFastTracks.map((entry, idx) => (
+                        <div key={`fast-${idx}`} className="flex items-center justify-between text-sm">
+                          <span className="text-zinc-200 truncate flex-1">{entry.title || 'Inconnu'}</span>
+                          <span className="text-emerald-400 text-xs font-mono ml-2">{entry.fastestBuzzMs ? formatMsToSeconds(entry.fastestBuzzMs) : 'n/a'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="bg-zinc-900 border border-white/8 rounded-2xl p-5">
+                    <p className="text-xs text-zinc-500 uppercase tracking-wider mb-3">Musiques les + difficiles</p>
+                    <div className="space-y-2">
+                      {sessionStats.topHardTracks.length === 0 && <p className="text-xs text-zinc-600">Pas encore de données.</p>}
+                      {sessionStats.topHardTracks.map((entry, idx) => (
+                        <div key={`hard-${idx}`} className="flex items-center justify-between text-sm">
+                          <span className="text-zinc-200 truncate flex-1">{entry.title || 'Inconnu'}</span>
+                          <span className="text-amber-400 text-xs ml-2">{entry.revealedWithoutAnswer} sans rép.</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Vos Playlists */}
-        <div className="bg-zinc-900 rounded-2xl border border-white/5 p-6 mb-8 app-card">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="text-xl font-semibold flex items-center gap-2">
-              <Music className="w-5 h-5 text-indigo-400" />
-              Vos Playlists
-            </h2>
-            <button
-              onClick={() => setIsCreating(!isCreating)}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors text-sm font-medium"
-            >
-              <Plus className="w-4 h-4" />
-              Nouvelle Playlist
-            </button>
+              </>
+            )}
           </div>
+        )}
 
-          {isCreating && (
-            <form onSubmit={handleCreatePlaylist} className="mb-6 flex gap-3">
-              <input
-                type="text"
-                value={newPlaylistName}
-                onChange={(e) => setNewPlaylistName(e.target.value)}
-                placeholder="Nom de la playlist..."
-                className="flex-1 bg-zinc-950 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                autoFocus
-              />
-              <button
-                type="submit"
-                className="bg-zinc-800 hover:bg-zinc-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
-              >
-                Créer
-              </button>
-            </form>
-          )}
-
-          {playlists.length === 0 ? (
-            <div className="text-center py-10 text-zinc-500">
-              Aucune playlist. Créez-en une ou utilisez le wizard ci-dessus !
-            </div>
-          ) : (
-            <div className="grid gap-3">
-              {playlists.map((playlist) => (
-                <div key={playlist.id} className="bg-zinc-950 border border-white/5 rounded-xl p-4 flex items-center justify-between group hover:border-white/10 transition-colors">
-                  <div>
-                    <h3 className="font-medium">{playlist.name}</h3>
-                    <p className="text-sm text-zinc-500">{playlist.tracks.length} pistes</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => navigate(`/admin/playlist/${playlist.id}`)}
-                      className="bg-zinc-800 hover:bg-zinc-700 text-white px-3 py-2 rounded-lg flex items-center gap-2 transition-colors text-sm"
-                    >
-                      <Edit className="w-4 h-4" />
-                      Éditer
-                    </button>
-                    <button
-                      onClick={() => {
-                        setPendingPlaylistLaunch(playlist);
-                        setShowLaunchModal(true);
-                      }}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg flex items-center gap-2 transition-colors text-sm"
-                    >
-                      <Play className="w-4 h-4" />
-                      Lancer
-                    </button>
-                    <button
-                      onClick={() => handleTogglePlaylistVisibility(playlist)}
-                      className="text-xs px-3 py-2 rounded-lg border border-white/10 bg-zinc-900 hover:bg-zinc-800"
-                    >
-                      {playlist.visibility === 'public' ? 'Public' : 'Privée'}
-                    </button>
-                    <button
-                      onClick={() => handleDeletePlaylist(playlist.id)}
-                      className="text-zinc-500 hover:text-red-400 p-2 rounded-lg transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+        {/* BUSINESS */}
+        {adminTab === 'business' && (
+          <div className="space-y-6">
+            <div className="bg-zinc-900 border border-white/8 rounded-2xl p-6">
+              <h2 className="text-lg font-bold mb-1 flex items-center gap-2"><Trophy className="w-5 h-5 text-amber-400" />Tournoi multi-soirées</h2>
+              <p className="text-xs text-zinc-500 mb-4">Crée un tournoi, puis ajoute des sessions pour générer un classement cumulé.</p>
+              <div className="flex gap-2 mb-4">
+                <input type="text" value={newTournamentName} onChange={(e) => setNewTournamentName(e.target.value)} placeholder="Nom du tournoi (ex: Ligue Campus Avril)" className="flex-1 bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm" />
+                <button onClick={handleCreateTournament} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-xl text-sm font-medium">Créer</button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-zinc-950 border border-white/8 rounded-xl p-4">
+                  <p className="text-xs text-zinc-500 uppercase mb-3">Mes tournois</p>
+                  <div className="space-y-2 max-h-56 overflow-auto">
+                    {tournaments.length === 0 && <p className="text-xs text-zinc-600">Aucun tournoi.</p>}
+                    {tournaments.map((t) => (
+                      <button key={t.id} onClick={() => void handleLoadTournamentLeaderboard(t.id)} className={`w-full text-left border rounded-xl px-3 py-2 text-sm transition-all ${selectedTournamentId === t.id ? 'bg-indigo-600/20 border-indigo-500/40 text-indigo-200' : 'bg-zinc-900 border-white/8 hover:border-white/15'}`}>
+                        {t.name}
+                      </button>
+                    ))}
                   </div>
                 </div>
-              ))}
+                <div className="bg-zinc-950 border border-white/8 rounded-xl p-4">
+                  <p className="text-xs text-zinc-500 uppercase mb-3">Classement cumulé</p>
+                  <div className="space-y-1.5 max-h-56 overflow-auto">
+                    {!tournamentLeaderboard && <p className="text-xs text-zinc-600">Sélectionne un tournoi.</p>}
+                    {tournamentLeaderboard?.length === 0 && <p className="text-xs text-zinc-600">Pas encore de scores.</p>}
+                    {tournamentLeaderboard?.map((entry, idx) => (
+                      <div key={`${entry.name}-${idx}`} className="flex items-center justify-between text-sm">
+                        <span className="text-zinc-200">#{idx + 1} {entry.name}</span>
+                        <span className="text-indigo-300 font-mono text-xs">{entry.score} pts</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {selectedTournamentId && (
+                <div className="mt-4 bg-zinc-950 border border-white/8 rounded-xl p-4">
+                  <p className="text-xs text-zinc-500 uppercase mb-3">Ajouter une session au tournoi</p>
+                  <div className="flex flex-wrap gap-2">
+                    {blindTests.slice(0, 12).map((session) => (
+                      <button key={session.id} onClick={() => void handleAttachSessionToTournament(selectedTournamentId, session.id)} className="text-xs bg-zinc-900 hover:bg-zinc-800 border border-white/10 rounded-lg px-2.5 py-1.5 transition-colors">{session.title}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </div>
 
+            <div className="bg-zinc-900 border border-white/8 rounded-2xl p-6">
+              <h2 className="text-lg font-bold mb-1 flex items-center gap-2"><Flag className="w-5 h-5 text-fuchsia-400" />Animation événement pro (marque blanche)</h2>
+              <p className="text-xs text-zinc-500 mb-4">Personnalise les couleurs/logo et récupère les KPIs client.</p>
+              <div className="flex gap-2 mb-4">
+                <select value={selectedBrandingBlindtestId} onChange={(e) => void handleLoadBranding(e.target.value)} className="flex-1 bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm">
+                  <option value="">Choisir une session</option>
+                  {blindTests.map((session) => (<option key={session.id} value={session.id}>{session.title} ({session.gameId})</option>))}
+                </select>
+                <button onClick={handleSaveBranding} disabled={!selectedBrandingBlindtestId} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-xl text-sm font-medium disabled:opacity-50">Sauvegarder</button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                <input type="text" value={brandingDraft.clientName} onChange={(e) => setBrandingDraft((p) => ({ ...p, clientName: e.target.value }))} placeholder="Nom client / événement" className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm" />
+                <input type="text" value={brandingDraft.logoUrl} onChange={(e) => setBrandingDraft((p) => ({ ...p, logoUrl: e.target.value }))} placeholder="URL du logo" className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm" />
+                <label className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm flex items-center justify-between">Couleur primaire<input type="color" value={brandingDraft.primaryColor} onChange={(e) => setBrandingDraft((p) => ({ ...p, primaryColor: e.target.value }))} /></label>
+                <label className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm flex items-center justify-between">Couleur accent<input type="color" value={brandingDraft.accentColor} onChange={(e) => setBrandingDraft((p) => ({ ...p, accentColor: e.target.value }))} /></label>
+              </div>
+              {brandingReport && (
+                <div className="bg-zinc-950 border border-white/8 rounded-xl p-4">
+                  <p className="text-xs text-zinc-500 uppercase mb-3">Rapport client (B2B)</p>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs mb-3">
+                    {[{ label: 'Participants', value: brandingReport.kpi?.participants || 0 }, { label: 'Buzz', value: brandingReport.kpi?.totalBuzzes || 0 }, { label: 'Bonnes rép.', value: brandingReport.kpi?.totalCorrect || 0 }, { label: 'Erreurs', value: brandingReport.kpi?.totalWrong || 0 }, { label: 'Taux réussite', value: `${brandingReport.kpi?.successRate || 0}%` }].map(({ label, value }) => (
+                      <div key={label} className="bg-zinc-900 border border-white/8 rounded-xl p-3"><p className="text-zinc-500">{label}</p><p className="text-xl font-bold mt-0.5">{value}</p></div>
+                    ))}
+                  </div>
+                  <div className="space-y-1.5">
+                    {(brandingReport.topPlayers || []).slice(0, 5).map((entry: any, idx: number) => (
+                      <div key={`${entry.name}-${idx}`} className="flex items-center justify-between text-sm">
+                        <span className="text-zinc-200">#{idx + 1} {entry.name}</span>
+                        <span className="text-indigo-300 text-xs font-mono">{entry.score} pts</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* LAUNCH MODAL */}
         {showLaunchModal && (
           <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl bg-zinc-900 border border-white/10 rounded-2xl p-6 space-y-4">
+            <div className="w-full max-w-2xl bg-zinc-900 border border-white/10 rounded-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
               <h3 className="text-xl font-semibold">Options de lancement</h3>
-              <p className="text-sm text-zinc-400">
-                Configure cette partie maintenant. Ces options seront appliquées uniquement à ce lancement.
-              </p>
+              <p className="text-sm text-zinc-400">Configure cette partie. Ces options s'appliquent uniquement à ce lancement.</p>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 text-sm space-y-2">
                   <span className="block text-zinc-300">Difficulté</span>
-                  <select
-                    value={launchOptions.difficulty}
-                    onChange={(e) => setLaunchOptions((prev) => ({ ...prev, difficulty: e.target.value as 'easy' | 'medium' | 'hard' }))}
-                    className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2"
-                  >
-                    <option value="easy">Facile (30s)</option>
-                    <option value="medium">Moyen (20s)</option>
-                    <option value="hard">Difficile (12s)</option>
+                  <select value={launchOptions.difficulty} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, difficulty: e.target.value as 'easy' | 'medium' | 'hard' }))} className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2">
+                    <option value="easy">Facile (30s)</option><option value="medium">Moyen (20s)</option><option value="hard">Difficile (12s)</option>
                   </select>
                 </label>
                 <label className="bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 text-sm space-y-2">
                   <span className="block text-zinc-300">Thème visuel</span>
-                  <select
-                    value={launchOptions.theme}
-                    onChange={(e) => setLaunchOptions((prev) => ({ ...prev, theme: e.target.value as 'dark' | 'neon' | 'retro' | 'minimal' }))}
-                    className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2"
-                  >
-                    <option value="dark">Dark</option>
-                    <option value="neon">Neon</option>
-                    <option value="retro">Retro</option>
-                    <option value="minimal">Minimal</option>
+                  <select value={launchOptions.theme} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, theme: e.target.value as 'dark' | 'neon' | 'retro' | 'minimal' }))} className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2">
+                    <option value="dark">Dark</option><option value="neon">Neon</option><option value="retro">Retro</option><option value="minimal">Minimal</option>
                   </select>
                 </label>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3">
-                  <span className="text-sm">Activer bonus et jokers</span>
-                  <input
-                    type="checkbox"
-                    checked={launchOptions.enableBonuses}
-                    onChange={(e) => setLaunchOptions((prev) => ({ ...prev, enableBonuses: e.target.checked }))}
-                  />
-                </label>
-                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3">
-                  <span className="text-sm">Mode équipe</span>
-                  <input
-                    type="checkbox"
-                    checked={launchOptions.isTeamMode}
-                    onChange={(e) => setLaunchOptions((prev) => ({ ...prev, isTeamMode: e.target.checked }))}
-                  />
-                </label>
-                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 md:col-span-2">
-                  <span className="text-sm">Questions / pistes en ordre aléatoire</span>
-                  <input
-                    type="checkbox"
-                    checked={launchOptions.shuffleQuestions}
-                    onChange={(e) => setLaunchOptions((prev) => ({ ...prev, shuffleQuestions: e.target.checked }))}
-                  />
-                </label>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3">
-                  <span className="text-sm">Onboarding public (10s)</span>
-                  <input
-                    type="checkbox"
-                    checked={launchOptions.onboardingEnabled}
-                    onChange={(e) => setLaunchOptions((prev) => ({ ...prev, onboardingEnabled: e.target.checked }))}
-                  />
-                </label>
-                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3">
-                  <span className="text-sm">Mode tournoi multi-manches</span>
-                  <input
-                    type="checkbox"
-                    checked={launchOptions.tournamentMode}
-                    onChange={(e) => setLaunchOptions((prev) => ({ ...prev, tournamentMode: e.target.checked }))}
-                  />
-                </label>
+                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3"><span className="text-sm">Bonus et jokers</span><input type="checkbox" checked={launchOptions.enableBonuses} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, enableBonuses: e.target.checked }))} /></label>
+                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3"><span className="text-sm">Mode équipe</span><input type="checkbox" checked={launchOptions.isTeamMode} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, isTeamMode: e.target.checked }))} /></label>
+                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 md:col-span-2"><span className="text-sm">Ordre aléatoire</span><input type="checkbox" checked={launchOptions.shuffleQuestions} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, shuffleQuestions: e.target.checked }))} /></label>
+                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3"><span className="text-sm">Onboarding public (10s)</span><input type="checkbox" checked={launchOptions.onboardingEnabled} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, onboardingEnabled: e.target.checked }))} /></label>
+                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3"><span className="text-sm">Mode tournoi multi-manches</span><input type="checkbox" checked={launchOptions.tournamentMode} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, tournamentMode: e.target.checked }))} /></label>
+                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 md:col-span-2"><span className="text-sm">Timer strict (révélation auto)</span><input type="checkbox" checked={launchOptions.strictTimerEnabled} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, strictTimerEnabled: e.target.checked }))} /></label>
               </div>
 
               <div className="bg-zinc-950 border border-white/10 rounded-xl p-4 space-y-3">
                 <p className="text-sm font-medium">Règles personnalisées</p>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <label className="text-xs text-zinc-400">
-                    Pénalité mauvaise réponse
-                    <input
-                      type="number"
-                      min={-20}
-                      max={0}
-                      value={launchOptions.rules.wrongAnswerPenalty}
-                      onChange={(e) =>
-                        setLaunchOptions((prev) => ({
-                          ...prev,
-                          rules: { ...prev.rules, wrongAnswerPenalty: Number(e.target.value) || 0 },
-                        }))
-                      }
-                      className="mt-1 w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200"
-                    />
-                  </label>
-                  <label className="text-xs text-zinc-400">
-                    Pénalité anti-spam
-                    <input
-                      type="number"
-                      min={-20}
-                      max={0}
-                      value={launchOptions.rules.antiSpamPenalty}
-                      onChange={(e) =>
-                        setLaunchOptions((prev) => ({
-                          ...prev,
-                          rules: { ...prev.rules, antiSpamPenalty: Number(e.target.value) || 0 },
-                        }))
-                      }
-                      className="mt-1 w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200"
-                    />
-                  </label>
-                  <label className="text-xs text-zinc-400">
-                    Verrouillage progressif (ms)
-                    <input
-                      type="number"
-                      min={1000}
-                      max={20000}
-                      step={500}
-                      value={launchOptions.rules.progressiveLockBaseMs}
-                      onChange={(e) =>
-                        setLaunchOptions((prev) => ({
-                          ...prev,
-                          rules: { ...prev.rules, progressiveLockBaseMs: Number(e.target.value) || 5000 },
-                        }))
-                      }
-                      className="mt-1 w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200"
-                    />
-                  </label>
+                  <label className="text-xs text-zinc-400">Pénalité mauvaise réponse<input type="number" min={-20} max={0} value={launchOptions.rules.wrongAnswerPenalty} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, rules: { ...prev.rules, wrongAnswerPenalty: Number(e.target.value) || 0 } }))} className="mt-1 w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200" /></label>
+                  <label className="text-xs text-zinc-400">Pénalité anti-spam<input type="number" min={-20} max={0} value={launchOptions.rules.antiSpamPenalty} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, rules: { ...prev.rules, antiSpamPenalty: Number(e.target.value) || 0 } }))} className="mt-1 w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200" /></label>
+                  <label className="text-xs text-zinc-400">Verrouillage progressif (ms)<input type="number" min={1000} max={20000} step={500} value={launchOptions.rules.progressiveLockBaseMs} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, rules: { ...prev.rules, progressiveLockBaseMs: Number(e.target.value) || 5000 } }))} className="mt-1 w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200" /></label>
                 </div>
-                <label className="flex items-center justify-between bg-zinc-900 border border-white/10 rounded-lg px-3 py-2">
-                  <span className="text-sm">Activer verrouillage progressif</span>
-                  <input
-                    type="checkbox"
-                    checked={launchOptions.rules.progressiveLock}
-                    onChange={(e) =>
-                      setLaunchOptions((prev) => ({
-                        ...prev,
-                        rules: { ...prev.rules, progressiveLock: e.target.checked },
-                      }))
-                    }
-                  />
-                </label>
+                <label className="flex items-center justify-between bg-zinc-900 border border-white/10 rounded-lg px-3 py-2"><span className="text-sm">Verrouillage progressif actif</span><input type="checkbox" checked={launchOptions.rules.progressiveLock} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, rules: { ...prev.rules, progressiveLock: e.target.checked } }))} /></label>
               </div>
 
               {launchOptions.isTeamMode && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm text-zinc-400">Équipes disponibles pour cette partie</p>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setLaunchOptions((prev) => ({
-                          ...prev,
-                          teamConfig: [...prev.teamConfig, createTeamConfigItem(prev.teamConfig.length)],
-                        }))
-                      }
-                      className="text-xs bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-200 px-3 py-1.5 rounded-lg flex items-center gap-1"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      Ajouter une équipe
-                    </button>
+                    <p className="text-sm text-zinc-400">Équipes disponibles</p>
+                    <button type="button" onClick={() => setLaunchOptions((prev) => ({ ...prev, teamConfig: [...prev.teamConfig, createTeamConfigItem(prev.teamConfig.length)] }))} className="text-xs bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-200 px-3 py-1.5 rounded-lg flex items-center gap-1"><Plus className="w-3.5 h-3.5" />Ajouter</button>
                   </div>
                   {launchOptions.teamConfig.map((team) => (
                     <div key={team.id} className="grid grid-cols-12 gap-2 items-center bg-zinc-950 border border-white/10 rounded-xl p-3">
-                      <div className="col-span-1">
-                        <input
-                          type="checkbox"
-                          checked={team.enabled}
-                          onChange={(e) =>
-                            setLaunchOptions((prev) => ({
-                              ...prev,
-                              teamConfig: prev.teamConfig.map((item) =>
-                                item.id === team.id ? { ...item, enabled: e.target.checked } : item,
-                              ),
-                            }))
-                          }
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <input
-                          type="color"
-                          value={team.color}
-                          onChange={(e) =>
-                            setLaunchOptions((prev) => ({
-                              ...prev,
-                              teamConfig: prev.teamConfig.map((item) =>
-                                item.id === team.id ? { ...item, color: e.target.value } : item,
-                              ),
-                            }))
-                          }
-                          className="w-full h-9 bg-transparent border border-white/10 rounded"
-                        />
-                      </div>
-                      <div className="col-span-9">
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={team.name}
-                            onChange={(e) =>
-                              setLaunchOptions((prev) => ({
-                                ...prev,
-                                teamConfig: prev.teamConfig.map((item) =>
-                                  item.id === team.id ? { ...item, name: e.target.value } : item,
-                                ),
-                              }))
-                            }
-                            className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm"
-                          />
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setLaunchOptions((prev) => ({
-                                ...prev,
-                                teamConfig: prev.teamConfig.filter((item) => item.id !== team.id),
-                              }))
-                            }
-                            className="text-red-300 hover:text-red-200 bg-red-600/10 hover:bg-red-600/20 border border-red-500/20 rounded-lg p-2"
-                            title="Supprimer l'équipe"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
+                      <div className="col-span-1"><input type="checkbox" checked={team.enabled} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, teamConfig: prev.teamConfig.map((item) => item.id === team.id ? { ...item, enabled: e.target.checked } : item) }))} /></div>
+                      <div className="col-span-2"><input type="color" value={team.color} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, teamConfig: prev.teamConfig.map((item) => item.id === team.id ? { ...item, color: e.target.value } : item) }))} className="w-full h-9 bg-transparent border border-white/10 rounded" /></div>
+                      <div className="col-span-9 flex items-center gap-2">
+                        <input type="text" value={team.name} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, teamConfig: prev.teamConfig.map((item) => item.id === team.id ? { ...item, name: e.target.value } : item) }))} className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm" />
+                        <button type="button" onClick={() => setLaunchOptions((prev) => ({ ...prev, teamConfig: prev.teamConfig.filter((item) => item.id !== team.id) }))} className="text-red-300 hover:text-red-200 bg-red-600/10 hover:bg-red-600/20 border border-red-500/20 rounded-lg p-2"><Trash2 className="w-4 h-4" /></button>
                       </div>
                     </div>
                   ))}
@@ -1306,22 +1201,8 @@ export default function AdminDashboard() {
               )}
 
               <div className="flex justify-end gap-3 pt-2">
-                <button
-                  onClick={() => {
-                    setShowLaunchModal(false);
-                    setPendingPlaylistLaunch(null);
-                    setPendingYoutubeLaunch(null);
-                  }}
-                  className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-lg text-sm"
-                >
-                  Annuler
-                </button>
-                <button
-                  onClick={handleLaunchWithOptions}
-                  className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg text-sm font-medium"
-                >
-                  Lancer la partie
-                </button>
+                <button onClick={() => { setShowLaunchModal(false); setPendingPlaylistLaunch(null); setPendingYoutubeLaunch(null); }} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm">Annuler</button>
+                <button onClick={handleLaunchWithOptions} className="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-xl text-sm font-semibold">Lancer la partie</button>
               </div>
             </div>
           </div>

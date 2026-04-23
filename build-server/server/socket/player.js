@@ -10,8 +10,14 @@ const playerJoinSchema = zod_1.z.object({
     gameId: zod_1.z.string().min(1).max(10),
     playerId: zod_1.z.string().min(1).max(100).optional(),
     playerSecret: zod_1.z.string().min(1).max(200).optional(),
+    publicId: zod_1.z.string().min(1).max(64).optional(),
     name: zod_1.z.string().min(1).max(20),
     team: zod_1.z.string().min(1).max(32).optional(),
+});
+const submitTextAnswerSchema = zod_1.z.object({
+    gameId: zod_1.z.string().min(1).max(10),
+    playerId: zod_1.z.string().min(1).max(100),
+    answer: zod_1.z.string().min(1).max(200),
 });
 function registerPlayerHandlers(ctx) {
     const { socket, socketIp, activeGames, persistGame, sanitizeGameState, getRandomColor, buzzRateLimitsBySocket, buzzRateLimitsByIp, } = ctx;
@@ -26,12 +32,45 @@ function registerPlayerHandlers(ctx) {
         game.eventLogs = game.eventLogs.slice(0, 100);
         ctx.io.to(gameId).emit("game:eventLogs", game.eventLogs);
     };
+    const getCurrentTrackStat = (gameId) => {
+        const game = activeGames[gameId];
+        if (!game || !Array.isArray(game.playlist) || game.playlist.length === 0)
+            return null;
+        const trackIndex = game.currentTrackIndex;
+        const track = game.playlist[trackIndex];
+        if (!track)
+            return null;
+        if (!game.trackStats)
+            game.trackStats = {};
+        const key = String(trackIndex);
+        if (!game.trackStats[key]) {
+            game.trackStats[key] = {
+                trackIndex,
+                trackId: track.id,
+                title: track.title || `Piste ${trackIndex + 1}`,
+                artist: track.artist || "",
+                playedCount: 0,
+                totalBuzzes: 0,
+                correctAnswers: 0,
+                wrongAnswers: 0,
+                revealedWithoutAnswer: 0,
+            };
+        }
+        return game.trackStats[key];
+    };
+    const isTextAnswerEnabledForCurrentRound = (gameId) => {
+        const game = activeGames[gameId];
+        if (!game || !Array.isArray(game.rounds) || game.rounds.length === 0)
+            return false;
+        const round = game.rounds.find((entry) => game.currentTrackIndex >= entry.startIndex && game.currentTrackIndex <= entry.endIndex);
+        return !!round?.textAnswersEnabled;
+    };
     socket.on("player:joinGame", (rawPayload, callback) => {
         const parsed = playerJoinSchema.safeParse(rawPayload);
         if (!parsed.success) {
             return callback({ success: false, error: "Payload joueur invalide" });
         }
-        const { gameId, playerId, playerSecret, name, team } = parsed.data;
+        const { gameId, playerId, playerSecret, publicId, name, team } = parsed.data;
         const game = activeGames[gameId];
         if (!game) {
             return callback({ success: false, error: "Game not found" });
@@ -52,6 +91,8 @@ function registerPlayerHandlers(ctx) {
             }
             game.players[playerId].socketId = socket.id;
             game.players[playerId].name = sanitizedName;
+            if (publicId)
+                game.players[playerId].publicId = publicId;
             if (sanitizedTeam)
                 game.players[playerId].team = sanitizedTeam;
             game.players[playerId].stats = game.players[playerId].stats || { buzzes: 0, correctAnswers: 0, wrongAnswers: 0 };
@@ -68,6 +109,7 @@ function registerPlayerHandlers(ctx) {
             id: newPlayerId,
             socketId: socket.id,
             name: sanitizedName,
+            publicId,
             color: getRandomColor(),
             score: 0,
             lockedOut: false,
@@ -102,6 +144,13 @@ function registerPlayerHandlers(ctx) {
         if (!game)
             return callback({ success: false, error: "Game not found" });
         const player = game.players[playerId];
+        if (player?.frozenUntil && player.frozenUntil > now) {
+            player.lockedOut = true;
+        }
+        else if (player?.frozenUntil && player.frozenUntil <= now) {
+            player.frozenUntil = undefined;
+            player.lockedOut = false;
+        }
         if (!player || player.lockedOut || player.socketId !== socket.id) {
             return callback({ success: false, error: "Buzz refusé" });
         }
@@ -129,6 +178,20 @@ function registerPlayerHandlers(ctx) {
         if (game.status === "playing" && !game.buzzedPlayerId) {
             player.stats = player.stats || { buzzes: 0, correctAnswers: 0, wrongAnswers: 0 };
             player.stats.buzzes += 1;
+            const currentTrackStat = getCurrentTrackStat(gameId);
+            if (currentTrackStat) {
+                currentTrackStat.totalBuzzes += 1;
+                currentTrackStat.title = game.playlist[game.currentTrackIndex]?.title || currentTrackStat.title;
+                currentTrackStat.artist = game.playlist[game.currentTrackIndex]?.artist || currentTrackStat.artist;
+                currentTrackStat.trackId = game.playlist[game.currentTrackIndex]?.id || currentTrackStat.trackId;
+                if (game.trackStartTime) {
+                    const responseMs = Math.max(0, Date.now() - game.trackStartTime);
+                    if (currentTrackStat.fastestBuzzMs === undefined || responseMs < currentTrackStat.fastestBuzzMs) {
+                        currentTrackStat.fastestBuzzMs = responseMs;
+                        currentTrackStat.fastestBuzzPlayerId = playerId;
+                    }
+                }
+            }
             game.status = "paused";
             game.buzzedPlayerId = playerId;
             game.buzzTimestamp = Date.now();
@@ -141,5 +204,112 @@ function registerPlayerHandlers(ctx) {
         else {
             callback({ success: false, error: "Buzz non disponible" });
         }
+    });
+    socket.on("player:submitTextAnswer", (rawPayload, callback) => {
+        const parsed = submitTextAnswerSchema.safeParse(rawPayload);
+        if (!parsed.success) {
+            return callback({ success: false, error: "Payload invalide" });
+        }
+        const { gameId, playerId, answer } = parsed.data;
+        const game = activeGames[gameId];
+        if (!game)
+            return callback({ success: false, error: "Partie introuvable" });
+        const player = game.players[playerId];
+        if (!player || player.socketId !== socket.id) {
+            return callback({ success: false, error: "Joueur invalide" });
+        }
+        if (!["playing", "paused"].includes(game.status)) {
+            return callback({ success: false, error: "Question ouverte indisponible" });
+        }
+        if (!isTextAnswerEnabledForCurrentRound(gameId)) {
+            return callback({ success: false, error: "Question ouverte désactivée pour cette manche" });
+        }
+        const cleanAnswer = answer.trim().slice(0, 200);
+        if (!cleanAnswer)
+            return callback({ success: false, error: "Réponse vide" });
+        game.textAnswers = Array.isArray(game.textAnswers) ? game.textAnswers : [];
+        game.textAnswers.unshift({
+            id: crypto_1.default.randomUUID(),
+            playerId: player.id,
+            playerName: player.name,
+            answer: cleanAnswer,
+            createdAt: Date.now(),
+        });
+        game.textAnswers = game.textAnswers.slice(0, 100);
+        game.lastActivity = Date.now();
+        persistGame(game);
+        pushGameLog(gameId, "text_answer", `${player.name} a envoyé une réponse texte`);
+        ctx.io.to(gameId).emit("game:stateUpdate", sanitizeGameState(game));
+        callback({ success: true });
+    });
+    // ── WebRTC mic signaling relay (player → host) ──────────────────────────
+    // Player sends WebRTC offer to host
+    socket.on("player:micOffer", (rawPayload, callback) => {
+        const parsed = zod_1.z
+            .object({
+            gameId: zod_1.z.string().min(1).max(10),
+            playerId: zod_1.z.string().min(1).max(100),
+            sdp: zod_1.z.object({ type: zod_1.z.string(), sdp: zod_1.z.string() }),
+        })
+            .safeParse(rawPayload);
+        if (!parsed.success)
+            return callback({ success: false, error: "Payload invalide" });
+        const { gameId, playerId, sdp } = parsed.data;
+        const game = ctx.activeGames[gameId];
+        if (!game)
+            return callback({ success: false, error: "Partie introuvable" });
+        const player = game.players[playerId];
+        if (!player || player.socketId !== socket.id)
+            return callback({ success: false, error: "Non autorisé" });
+        // Relay to host socket (adminId is updated on each host:joinGame)
+        if (game.adminId) {
+            ctx.io.to(game.adminId).emit("player:micOffer", { playerId, sdp });
+        }
+        callback({ success: true });
+    });
+    // Player sends ICE candidate to host
+    socket.on("player:micIceCandidate", (rawPayload, callback) => {
+        const parsed = zod_1.z
+            .object({
+            gameId: zod_1.z.string().min(1).max(10),
+            playerId: zod_1.z.string().min(1).max(100),
+            candidate: zod_1.z.any(),
+        })
+            .safeParse(rawPayload);
+        if (!parsed.success)
+            return callback({ success: false, error: "Payload invalide" });
+        const { gameId, playerId, candidate } = parsed.data;
+        const game = ctx.activeGames[gameId];
+        if (!game)
+            return callback({ success: false, error: "Partie introuvable" });
+        const player = game.players[playerId];
+        if (!player || player.socketId !== socket.id)
+            return callback({ success: false, error: "Non autorisé" });
+        if (game.adminId) {
+            ctx.io.to(game.adminId).emit("player:micIceCandidate", { playerId, candidate });
+        }
+        callback({ success: true });
+    });
+    // Player notifies host that mic was stopped
+    socket.on("player:micStopped", (rawPayload, callback) => {
+        const parsed = zod_1.z
+            .object({
+            gameId: zod_1.z.string().min(1).max(10),
+            playerId: zod_1.z.string().min(1).max(100),
+        })
+            .safeParse(rawPayload);
+        if (!parsed.success)
+            return callback({ success: false, error: "Payload invalide" });
+        const { gameId, playerId } = parsed.data;
+        const game = ctx.activeGames[gameId];
+        if (!game)
+            return callback({ success: false, error: "Partie introuvable" });
+        const player = game.players[playerId];
+        if (!player || player.socketId !== socket.id)
+            return callback({ success: false, error: "Non autorisé" });
+        if (game.adminId) {
+            ctx.io.to(game.adminId).emit("player:micStopped", { playerId });
+        }
+        callback({ success: true });
     });
 }

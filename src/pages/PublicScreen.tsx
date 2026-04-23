@@ -2,48 +2,75 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { socket } from '../lib/socket';
 import { GameState, Player } from '../types';
+import { api } from '../api';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Trophy, Music, Users } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
-const Timer = ({ gameState, duration }: { gameState: GameState, duration: number }) => {
-  const [timeLeft, setTimeLeft] = useState(duration);
-  const [progress, setProgress] = useState(100);
+const Timer = ({ gameState, duration, strictMode }: { gameState: GameState; duration?: number; strictMode: boolean }) => {
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const [remainingSec, setRemainingSec] = useState(duration || 0);
 
   useEffect(() => {
     const interval = setInterval(() => {
       if (!gameState.trackStartTime) return;
       
-      let elapsed = 0;
+      let elapsedMs = 0;
       if (gameState.status === 'paused' && gameState.buzzTimestamp) {
-        elapsed = (gameState.buzzTimestamp - gameState.trackStartTime) / 1000;
+        elapsedMs = gameState.buzzTimestamp - gameState.trackStartTime;
       } else {
-        elapsed = (Date.now() - gameState.trackStartTime) / 1000;
+        elapsedMs = Date.now() - gameState.trackStartTime;
       }
-      
-      const remaining = Math.max(0, duration - elapsed);
-      setTimeLeft(Math.ceil(remaining));
-      setProgress((remaining / duration) * 100);
+      const elapsed = Math.max(0, Math.floor(elapsedMs / 1000));
+      setElapsedSec(elapsed);
+      if (strictMode && typeof duration === 'number' && duration > 0) {
+        setRemainingSec(Math.max(0, duration - elapsed));
+      }
     }, 100);
     return () => clearInterval(interval);
-  }, [gameState.trackStartTime, gameState.status, gameState.buzzTimestamp, duration]);
+  }, [gameState.trackStartTime, gameState.status, gameState.buzzTimestamp, strictMode, duration]);
+
+  const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+  const ss = String(elapsedSec % 60).padStart(2, '0');
+  const rm = String(Math.floor(remainingSec / 60)).padStart(2, '0');
+  const rs = String(remainingSec % 60).padStart(2, '0');
 
   return (
     <div className="mt-12 w-full max-w-2xl mx-auto">
-      <div className="flex justify-between text-zinc-400 mb-2 font-mono text-xl">
-        <span>00:00</span>
-        <span className={timeLeft <= 5 ? 'text-red-500 font-bold animate-pulse' : ''}>
-          00:{timeLeft.toString().padStart(2, '0')}
-        </span>
-      </div>
-      <div className="h-4 bg-zinc-800 rounded-full overflow-hidden">
-        <motion.div 
-          className={`h-full ${timeLeft <= 5 ? 'bg-red-500' : 'bg-indigo-500'}`}
-          style={{ width: `${progress}%` }}
-          transition={{ duration: 0.1 }}
-        />
-      </div>
+      {strictMode && typeof duration === 'number' && duration > 0 ? (
+        <>
+          <div className="flex justify-between text-zinc-400 mb-2 font-mono text-xl">
+            <span>00:00</span>
+            <span className={remainingSec <= 5 ? 'text-red-500 font-bold animate-pulse' : ''}>
+              {rm}:{rs}
+            </span>
+          </div>
+          <div className="h-4 bg-zinc-800 rounded-full overflow-hidden">
+            <motion.div
+              className={remainingSec <= 5 ? 'h-full bg-red-500' : 'h-full bg-indigo-500'}
+              style={{ width: `${Math.min(100, (remainingSec / duration) * 100)}%` }}
+              transition={{ duration: 0.1 }}
+            />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex justify-between text-zinc-400 mb-2 font-mono text-xl">
+            <span>Temps écoulé</span>
+            <span className="text-emerald-400 font-bold">
+              {mm}:{ss}
+            </span>
+          </div>
+          <div className="h-4 bg-zinc-800 rounded-full overflow-hidden">
+            <motion.div 
+              className="h-full bg-emerald-500/70"
+              style={{ width: `${Math.min(100, (elapsedSec % 60) * (100 / 60))}%` }}
+              transition={{ duration: 0.1 }}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 };
@@ -95,6 +122,7 @@ const playSound = (type: 'buzz' | 'correct' | 'wrong') => {
 export default function PublicScreen() {
   const { gameId } = useParams<{ gameId: string }>();
   const [gameState, setGameState] = useState<GameState | null>(null);
+  const [branding, setBranding] = useState<{ client_name?: string; logo_url?: string; primary_color?: string; accent_color?: string } | null>(null);
   const hasFinishedRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -189,6 +217,25 @@ export default function PublicScreen() {
   }, [gameId]);
 
   useEffect(() => {
+    if (!gameId) return;
+    let active = true;
+    const loadBranding = async () => {
+      try {
+        const res = await api.events.getBrandingByGame(gameId);
+        if (!active) return;
+        setBranding(res.branding || null);
+      } catch {
+        if (!active) return;
+        setBranding(null);
+      }
+    };
+    void loadBranding();
+    return () => {
+      active = false;
+    };
+  }, [gameId]);
+
+  useEffect(() => {
     if (document.fullscreenElement) return;
     document.documentElement.requestFullscreen?.().catch(() => {});
   }, []);
@@ -207,6 +254,18 @@ export default function PublicScreen() {
     : 0;
   const sortedPlayers = (Object.values(gameState.players) as Player[]).sort((a, b) => b.score - a.score);
   const top3 = sortedPlayers.slice(0, 3);
+  const elapsedSeconds = gameState.trackStartTime
+    ? Math.max(
+        0,
+        Math.floor(
+          ((gameState.status === 'paused' && gameState.buzzTimestamp ? gameState.buzzTimestamp : Date.now()) - gameState.trackStartTime) /
+            1000,
+        ),
+      )
+    : 0;
+  const revealDuration = Math.max(1, currentTrack?.imageRevealDuration || trackDuration || 30);
+  const revealProgress = Math.min(1, elapsedSeconds / revealDuration);
+  const imageBlurPx = currentTrack?.imageRevealMode === 'blur' ? Math.round((1 - revealProgress) * 16) : 0;
 
   // Calculate team scores if in team mode
   const teamScores = gameState.isTeamMode ? (Object.values(gameState.players) as Player[]).reduce((acc, player) => {
@@ -249,15 +308,18 @@ export default function PublicScreen() {
       {/* Top Bar */}
       <div className="bg-black/20 border-b border-white/10 p-6 flex items-center justify-between">
         <div className="flex items-center gap-6">
-          <div className="bg-white p-2 rounded-xl">
-            <QRCodeSVG value={joinUrl} size={80} />
-          </div>
+            <div className="bg-white p-2 rounded-xl">
+              <QRCodeSVG value={joinUrl} size={80} />
+            </div>
           <div>
-            <p className="text-zinc-400 text-lg uppercase tracking-widest font-semibold">Rejoignez la partie sur</p>
+              <p className="text-zinc-400 text-lg uppercase tracking-widest font-semibold">{branding?.client_name ? `${branding.client_name} • ` : ''}Rejoignez la partie sur</p>
             <p className="text-2xl font-medium">{window.location.host}</p>
             <div className="flex items-center gap-4 mt-2">
               <p className="text-zinc-400">Code :</p>
-              <span className="bg-indigo-600 text-white px-4 py-1 rounded-lg text-3xl font-mono font-bold tracking-widest">
+              <span
+                className="text-white px-4 py-1 rounded-lg text-3xl font-mono font-bold tracking-widest"
+                style={{ backgroundColor: branding?.primary_color || '#4f46e5' }}
+              >
                 {gameState.id}
               </span>
             </div>
@@ -265,6 +327,7 @@ export default function PublicScreen() {
         </div>
         
         <div className="text-right">
+          {branding?.logo_url && <img src={branding.logo_url} alt="logo client" className="h-12 ml-auto mb-2 object-contain" />}
           <p className="text-zinc-500 text-xl font-medium uppercase tracking-widest mb-2">
             {isYoutubeMode ? `Manche ${gameState.roundNumber || 1}` : `Piste ${gameState.currentTrackIndex + 1} / ${gameState.playlist.length}`}
           </p>
@@ -347,7 +410,12 @@ export default function PublicScreen() {
               >
                 {currentTrack?.mediaType === 'image' && currentTrack.mediaUrl ? (
                   <div className="mb-8 rounded-2xl overflow-hidden shadow-2xl border-4 border-indigo-500/30">
-                    <img src={currentTrack.mediaUrl} alt="Indice" className="w-full h-auto max-h-[50vh] object-contain bg-black/50" />
+                    <img
+                      src={currentTrack.mediaUrl}
+                      alt="Indice"
+                      className="w-full h-auto max-h-[50vh] object-contain bg-black/50 transition-all duration-300"
+                      style={{ filter: imageBlurPx > 0 ? `blur(${imageBlurPx}px)` : 'none' }}
+                    />
                   </div>
                 ) : currentTrack?.mediaType === 'video' && currentTrack.mediaUrl ? (
                   <div className="mb-8 rounded-2xl overflow-hidden shadow-2xl border-4 border-indigo-500/30">
@@ -415,9 +483,16 @@ export default function PublicScreen() {
                    currentTrack?.mediaType === 'text' ? 'Lisez bien...' : 
                    'Écoutez bien...'}
                 </h1>
+                {currentTrack?.mediaType === 'image' && currentTrack?.visualHint && (
+                  <p className="mt-5 text-2xl text-zinc-300">{currentTrack.visualHint}</p>
+                )}
                 
                 {gameState.trackStartTime && (
-                  <Timer gameState={gameState} duration={trackDuration} />
+                  <Timer
+                    gameState={gameState}
+                    duration={trackDuration}
+                    strictMode={Boolean(gameState.strictTimerEnabled)}
+                  />
                 )}
               </motion.div>
             )}

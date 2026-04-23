@@ -81,6 +81,13 @@ export default function HardwareDashboard() {
     });
   };
 
+  const updateDeviceProfile = (deviceId: string, patch: { sensitivity?: number; ledStyle?: 'classic' | 'pulse' | 'rainbow'; soundStyle?: 'default' | 'arcade' | 'soft' }) => {
+    if (!gameId || !hostToken) return;
+    socket.emit('host:updateDeviceProfile', { gameId, hostToken, deviceId, ...patch }, (res: any) => {
+      if (!res?.success) toastError(res?.error || 'Profil matériel impossible');
+    });
+  };
+
   if (!gameState) return <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">Chargement matériel...</div>;
 
   return (
@@ -129,6 +136,33 @@ export default function HardwareDashboard() {
                       {(device.speakerMuted ?? false) ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
                       {(device.speakerMuted ?? false) ? 'Unmute' : 'Mute'}
                     </button>
+                    <select
+                      value={String(device.sensitivity ?? 5)}
+                      onChange={(e) => updateDeviceProfile(device.id, { sensitivity: Number(e.target.value) })}
+                      className="bg-zinc-900 border border-white/10 rounded-lg px-2 py-1.5 text-xs"
+                    >
+                      {[1,2,3,4,5,6,7,8,9,10].map((level) => (
+                        <option key={`${device.id}-s-${level}`} value={level}>Sens {level}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={device.ledStyle || 'classic'}
+                      onChange={(e) => updateDeviceProfile(device.id, { ledStyle: e.target.value as 'classic' | 'pulse' | 'rainbow' })}
+                      className="bg-zinc-900 border border-white/10 rounded-lg px-2 py-1.5 text-xs"
+                    >
+                      <option value="classic">LED classic</option>
+                      <option value="pulse">LED pulse</option>
+                      <option value="rainbow">LED rainbow</option>
+                    </select>
+                    <select
+                      value={device.soundStyle || 'default'}
+                      onChange={(e) => updateDeviceProfile(device.id, { soundStyle: e.target.value as 'default' | 'arcade' | 'soft' })}
+                      className="bg-zinc-900 border border-white/10 rounded-lg px-2 py-1.5 text-xs"
+                    >
+                      <option value="default">Son default</option>
+                      <option value="arcade">Son arcade</option>
+                      <option value="soft">Son soft</option>
+                    </select>
                   </div>
                 </div>
               </div>

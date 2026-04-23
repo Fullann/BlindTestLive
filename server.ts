@@ -8,6 +8,7 @@ import * as Sentry from "@sentry/node";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
+import crypto from "crypto";
 import { Player } from "./src/types";
 import { registerGameStateHandlers } from "./server/socket/game-state";
 import { registerHostHandlers } from "./server/socket/host";
@@ -20,6 +21,8 @@ import authRouter from "./server/routes/auth";
 import playlistsRouter from "./server/routes/playlists";
 import blindtestsRouter from "./server/routes/blindtests";
 import hardwareRouter from "./server/routes/hardware";
+import eventsRouter from "./server/routes/events";
+import playerProfilesRouter from "./server/routes/player-profiles";
 
 const PORT = Number(process.env.PORT || 5174);
 const DATA_DIR = path.resolve(process.cwd(), "data");
@@ -66,6 +69,8 @@ const metrics = {
   gamesCreated: 0,
 };
 const connectedDeviceSockets = new Map<string, string>();
+let analyticsSchemaChecked = false;
+let dbPool: any = null;
 
 function auditLog(event: string, data: Record<string, unknown>) {
   metrics.eventsTotal += 1;
@@ -240,12 +245,56 @@ function isAllowedOrigin(originHeader?: string | null) {
   return allowedOrigins.includes(originHeader);
 }
 
+async function ensureAnalyticsSchema() {
+  if (analyticsSchemaChecked || !dbPool) return;
+  await dbPool.query(
+    `CREATE TABLE IF NOT EXISTS game_analytics (
+      id VARCHAR(36) NOT NULL PRIMARY KEY,
+      game_id VARCHAR(10) NOT NULL,
+      ended_reason VARCHAR(64) NOT NULL,
+      players_count INT NOT NULL DEFAULT 0,
+      total_buzzes INT NOT NULL DEFAULT 0,
+      total_correct INT NOT NULL DEFAULT 0,
+      total_wrong INT NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL,
+      INDEX idx_game_analytics_game (game_id),
+      INDEX idx_game_analytics_created (created_at)
+    )`,
+  );
+  await dbPool.query(
+    `CREATE TABLE IF NOT EXISTS game_player_analytics (
+      id VARCHAR(36) NOT NULL PRIMARY KEY,
+      analytics_id VARCHAR(36) NOT NULL,
+      player_id VARCHAR(100) NOT NULL,
+      public_id VARCHAR(64) NULL,
+      player_name VARCHAR(64) NOT NULL,
+      score INT NOT NULL DEFAULT 0,
+      buzzes INT NOT NULL DEFAULT 0,
+      correct_answers INT NOT NULL DEFAULT 0,
+      wrong_answers INT NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL,
+      INDEX idx_game_player_analytics_analytics (analytics_id),
+      INDEX idx_game_player_analytics_public (public_id)
+    )`,
+  );
+  analyticsSchemaChecked = true;
+}
+
 async function startServer() {
   loadGamesFromDisk();
   if (process.env.SENTRY_DSN) {
     Sentry.init({ dsn: process.env.SENTRY_DSN });
   }
   const app = express();
+  if (ENABLE_DB) {
+    const dbModule = await import("./server/db");
+    dbPool = dbModule.default;
+    try {
+      await ensureAnalyticsSchema();
+    } catch (error) {
+      console.warn("Analytics schema init skipped:", error);
+    }
+  }
   app.use(
     helmet({
       contentSecurityPolicy: false,
@@ -297,8 +346,10 @@ async function startServer() {
     app.use("/api/playlists", playlistsRouter);
     app.use("/api/blindtests", blindtestsRouter);
     app.use("/api/hardware", hardwareRouter);
+    app.use("/api/events", eventsRouter);
+    app.use("/api/player-profiles", playerProfilesRouter);
   } else {
-    app.use(["/api/auth", "/api/playlists", "/api/blindtests", "/api/hardware"], (_req, res) => {
+    app.use(["/api/auth", "/api/playlists", "/api/blindtests", "/api/hardware", "/api/events", "/api/player-profiles"], (_req, res) => {
       res.status(503).json({
         error: "Base de données désactivée en mode dev. Lance avec ENABLE_DB=true pour activer ces routes.",
       });
@@ -352,6 +403,44 @@ async function startServer() {
       buzzRateLimitsBySocket,
       buzzRateLimitsByIp,
       auditLog,
+      persistFinishedGameAnalytics: async (game: ServerGameState, reason: string) => {
+        if (!ENABLE_DB || !dbPool) return;
+        try {
+          await ensureAnalyticsSchema();
+          const analyticsId = crypto.randomUUID();
+          const now = Date.now();
+          const players = Object.values(game.players || {});
+          const totalBuzzes = players.reduce((sum, player) => sum + Number(player.stats?.buzzes || 0), 0);
+          const totalCorrect = players.reduce((sum, player) => sum + Number(player.stats?.correctAnswers || 0), 0);
+          const totalWrong = players.reduce((sum, player) => sum + Number(player.stats?.wrongAnswers || 0), 0);
+          await dbPool.query(
+            `INSERT INTO game_analytics (id, game_id, ended_reason, players_count, total_buzzes, total_correct, total_wrong, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [analyticsId, game.id, reason.slice(0, 64), players.length, totalBuzzes, totalCorrect, totalWrong, now],
+          );
+          for (const player of players as Player[]) {
+            await dbPool.query(
+              `INSERT INTO game_player_analytics
+                 (id, analytics_id, player_id, public_id, player_name, score, buzzes, correct_answers, wrong_answers, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                crypto.randomUUID(),
+                analyticsId,
+                player.id,
+                player.publicId || null,
+                String(player.name || "Joueur").slice(0, 64),
+                Number(player.score || 0),
+                Number(player.stats?.buzzes || 0),
+                Number(player.stats?.correctAnswers || 0),
+                Number(player.stats?.wrongAnswers || 0),
+                now,
+              ],
+            );
+          }
+        } catch (error) {
+          console.warn("persistFinishedGameAnalytics failed:", error);
+        }
+      },
     };
 
     registerHostHandlers(socketContext);

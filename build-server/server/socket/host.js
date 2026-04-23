@@ -29,6 +29,9 @@ const hostUpdateTrackSchema = zod_1.z.object({
         textContent: zod_1.z.string().max(2000).optional(),
         startTime: zod_1.z.number().min(0).optional(),
         url: zod_1.z.string().max(500).optional(),
+        visualHint: zod_1.z.string().max(500).optional(),
+        imageRevealMode: zod_1.z.enum(["none", "blur"]).optional(),
+        imageRevealDuration: zod_1.z.number().int().min(1).max(300).optional(),
     }),
 });
 const hostAddTrackSchema = zod_1.z.object({
@@ -43,6 +46,9 @@ const hostAddTrackSchema = zod_1.z.object({
         textContent: zod_1.z.string().max(2000).optional(),
         startTime: zod_1.z.number().min(0).optional(),
         url: zod_1.z.string().max(500).optional(),
+        visualHint: zod_1.z.string().max(500).optional(),
+        imageRevealMode: zod_1.z.enum(["none", "blur"]).optional(),
+        imageRevealDuration: zod_1.z.number().int().min(1).max(300).optional(),
     }),
 });
 const hostDeleteTrackSchema = zod_1.z.object({
@@ -63,6 +69,9 @@ const hostBulkUpdateUpcomingSchema = zod_1.z.object({
         textContent: zod_1.z.string().max(2000).optional(),
         startTime: zod_1.z.number().min(0).optional(),
         url: zod_1.z.string().max(500).optional(),
+        visualHint: zod_1.z.string().max(500).optional(),
+        imageRevealMode: zod_1.z.enum(["none", "blur"]).optional(),
+        imageRevealDuration: zod_1.z.number().int().min(1).max(300).optional(),
     }))
         .min(1)
         .max(500),
@@ -126,6 +135,46 @@ const hostAppendRoundSchema = zod_1.z.object({
     name: zod_1.z.string().min(1).max(64),
     tracks: zod_1.z.array(zod_1.z.any()).min(1).max(200),
 });
+const hostSetRoundTextModeSchema = zod_1.z.object({
+    gameId: zod_1.z.string().min(1).max(10),
+    hostToken: zod_1.z.string().min(10).max(200),
+    roundId: zod_1.z.string().min(1).max(64),
+    enabled: zod_1.z.boolean(),
+});
+const hostValidateTextAnswerSchema = zod_1.z.object({
+    gameId: zod_1.z.string().min(1).max(10),
+    hostToken: zod_1.z.string().min(10).max(200),
+    answerId: zod_1.z.string().min(1).max(100),
+    playerId: zod_1.z.string().min(1).max(100),
+    isCorrect: zod_1.z.boolean().optional(),
+    points: zod_1.z.number().int().min(-100).max(100).optional(),
+});
+const hostStartDuelSchema = zod_1.z.object({
+    gameId: zod_1.z.string().min(1).max(10),
+    hostToken: zod_1.z.string().min(10).max(200),
+    playerAId: zod_1.z.string().min(1).max(100),
+    playerBId: zod_1.z.string().min(1).max(100),
+    rewardPoints: zod_1.z.number().int().min(1).max(20).optional(),
+});
+const hostResolveDuelSchema = zod_1.z.object({
+    gameId: zod_1.z.string().min(1).max(10),
+    hostToken: zod_1.z.string().min(10).max(200),
+    winnerId: zod_1.z.string().min(1).max(100),
+});
+const hostApplyEventPowerSchema = zod_1.z.object({
+    gameId: zod_1.z.string().min(1).max(10),
+    hostToken: zod_1.z.string().min(10).max(200),
+    power: zod_1.z.enum(["x2", "freeze", "comeback"]),
+    targetPlayerId: zod_1.z.string().min(1).max(100),
+});
+const hostUpdateDeviceProfileSchema = zod_1.z.object({
+    gameId: zod_1.z.string().min(1).max(10),
+    hostToken: zod_1.z.string().min(10).max(200),
+    deviceId: zod_1.z.string().min(3).max(64),
+    sensitivity: zod_1.z.number().int().min(1).max(10).optional(),
+    ledStyle: zod_1.z.enum(["classic", "pulse", "rainbow"]).optional(),
+    soundStyle: zod_1.z.enum(["default", "arcade", "soft"]).optional(),
+});
 const hostCreateOptionsSchema = zod_1.z.object({
     isTeamMode: zod_1.z.boolean().optional(),
     shuffleQuestions: zod_1.z.boolean().optional(),
@@ -135,6 +184,7 @@ const hostCreateOptionsSchema = zod_1.z.object({
     onboardingEnabled: zod_1.z.boolean().optional(),
     tutorialSeconds: zod_1.z.number().int().min(5).max(30).optional(),
     tournamentMode: zod_1.z.boolean().optional(),
+    strictTimerEnabled: zod_1.z.boolean().optional(),
     rules: zod_1.z.object({
         wrongAnswerPenalty: zod_1.z.number().min(-20).max(0).optional(),
         progressiveLock: zod_1.z.boolean().optional(),
@@ -170,6 +220,31 @@ function logEvent(game, ctx, gameId, type, message) {
     game.eventLogs.unshift({ ts: Date.now(), type, message });
     game.eventLogs = game.eventLogs.slice(0, 100);
     ctx.io.to(gameId).emit("game:eventLogs", game.eventLogs);
+}
+function getCurrentTrackStat(game) {
+    if (!Array.isArray(game.playlist) || game.playlist.length === 0)
+        return null;
+    const trackIndex = game.currentTrackIndex;
+    const track = game.playlist[trackIndex];
+    if (!track)
+        return null;
+    if (!game.trackStats)
+        game.trackStats = {};
+    const key = String(trackIndex);
+    if (!game.trackStats[key]) {
+        game.trackStats[key] = {
+            trackIndex,
+            trackId: track.id,
+            title: track.title || `Piste ${trackIndex + 1}`,
+            artist: track.artist || "",
+            playedCount: 0,
+            totalBuzzes: 0,
+            correctAnswers: 0,
+            wrongAnswers: 0,
+            revealedWithoutAnswer: 0,
+        };
+    }
+    return game.trackStats[key];
 }
 async function emitHostsPresence(ctx, gameId) {
     const sockets = await ctx.io.in(gameId).fetchSockets();
@@ -225,6 +300,7 @@ function parseCreateOptions(rawOptions) {
             onboardingEnabled: true,
             tutorialSeconds: 10,
             tournamentMode: false,
+            strictTimerEnabled: false,
             rules: {
                 wrongAnswerPenalty: -1,
                 progressiveLock: true,
@@ -245,6 +321,7 @@ function parseCreateOptions(rawOptions) {
             onboardingEnabled: true,
             tutorialSeconds: 10,
             tournamentMode: false,
+            strictTimerEnabled: false,
             rules: {
                 wrongAnswerPenalty: -1,
                 progressiveLock: true,
@@ -269,6 +346,7 @@ function parseCreateOptions(rawOptions) {
         onboardingEnabled: parsed.data.onboardingEnabled ?? true,
         tutorialSeconds: parsed.data.tutorialSeconds ?? 10,
         tournamentMode: parsed.data.tournamentMode ?? false,
+        strictTimerEnabled: parsed.data.strictTimerEnabled ?? false,
         rules: {
             wrongAnswerPenalty: parsed.data.rules?.wrongAnswerPenalty ?? -1,
             progressiveLock: parsed.data.rules?.progressiveLock ?? true,
@@ -299,6 +377,9 @@ function registerHostHandlers(ctx) {
             textContent: t.textContent ? String(t.textContent).substring(0, 2000) : undefined,
             duration: typeof t.duration === "number" ? Math.max(1, Math.min(300, t.duration)) : defaultTrackDuration,
             startTime: typeof t.startTime === "number" ? Math.max(0, t.startTime) : undefined,
+            visualHint: t.visualHint ? String(t.visualHint).substring(0, 500) : undefined,
+            imageRevealMode: (t.imageRevealMode === "blur" ? "blur" : "none"),
+            imageRevealDuration: typeof t.imageRevealDuration === "number" ? Math.max(1, Math.min(300, Math.floor(t.imageRevealDuration))) : undefined,
         }));
         const effectivePlaylist = options.shuffleQuestions
             ? ctx.shuffleArray(sanitizedPlaylist)
@@ -327,9 +408,10 @@ function registerHostHandlers(ctx) {
             onboardingEnabled: options.onboardingEnabled,
             tutorialSeconds: options.tutorialSeconds,
             tournamentMode: options.tournamentMode,
+            strictTimerEnabled: options.strictTimerEnabled,
             rules: options.rules,
             teamConfig: options.teamConfig,
-            rounds: [{ id: crypto_1.default.randomUUID(), name: "Manche 1", startIndex: 0, endIndex: Math.max(0, effectivePlaylist.length - 1) }],
+            rounds: [{ id: crypto_1.default.randomUUID(), name: "Manche 1", startIndex: 0, endIndex: Math.max(0, effectivePlaylist.length - 1), textAnswersEnabled: false }],
             eventLogs: [],
             hostTokenExpiresAt: Date.now() + 12 * 60 * 60 * 1000,
             lastActivity: Date.now(),
@@ -375,9 +457,10 @@ function registerHostHandlers(ctx) {
             onboardingEnabled: options.onboardingEnabled,
             tutorialSeconds: options.tutorialSeconds,
             tournamentMode: options.tournamentMode,
+            strictTimerEnabled: options.strictTimerEnabled,
             rules: options.rules,
             teamConfig: options.teamConfig,
-            rounds: [{ id: crypto_1.default.randomUUID(), name: "Manche 1", startIndex: 0, endIndex: 0 }],
+            rounds: [{ id: crypto_1.default.randomUUID(), name: "Manche 1", startIndex: 0, endIndex: 0, textAnswersEnabled: false }],
             eventLogs: [],
             hostTokenExpiresAt: Date.now() + 12 * 60 * 60 * 1000,
             roundNumber: 1,
@@ -442,6 +525,13 @@ function registerHostHandlers(ctx) {
             if (track && !track.duration) {
                 track.duration = game.defaultTrackDuration || 20;
             }
+            const currentTrackStat = getCurrentTrackStat(game);
+            if (currentTrackStat) {
+                currentTrackStat.playedCount += 1;
+                currentTrackStat.title = track?.title || currentTrackStat.title;
+                currentTrackStat.artist = track?.artist || currentTrackStat.artist;
+                currentTrackStat.trackId = track?.id || currentTrackStat.trackId;
+            }
             logEvent(game, ctx, gameId, "track_start", "Manche démarrée");
             if (game.status === "lobby" && game.onboardingEnabled) {
                 game.status = "onboarding";
@@ -489,9 +579,17 @@ function registerHostHandlers(ctx) {
                     awarded = awarded * 2;
                     player.doublePointsArmed = false;
                 }
+                if (player.eventPowerDoubleNext) {
+                    awarded = awarded * 2;
+                    player.eventPowerDoubleNext = false;
+                }
                 player.score += awarded;
                 player.stats = player.stats || { buzzes: 0, correctAnswers: 0, wrongAnswers: 0 };
                 player.stats.correctAnswers += 1;
+                const currentTrackStat = getCurrentTrackStat(game);
+                if (currentTrackStat) {
+                    currentTrackStat.correctAnswers += 1;
+                }
                 logEvent(game, ctx, gameId, "points_awarded", `${player.name} gagne ${awarded} pts (combo x${player.combo})`);
             }
             game.status = "revealed";
@@ -522,6 +620,10 @@ function registerHostHandlers(ctx) {
                 game.players[playerId].score += wrongPenalty;
                 game.players[playerId].stats = game.players[playerId].stats || { buzzes: 0, correctAnswers: 0, wrongAnswers: 0 };
                 game.players[playerId].stats.wrongAnswers += 1;
+                const currentTrackStat = getCurrentTrackStat(game);
+                if (currentTrackStat) {
+                    currentTrackStat.wrongAnswers += 1;
+                }
                 logEvent(game, ctx, gameId, "player_penalized", `${game.players[playerId].name} pénalisé`);
                 if (game.rules?.progressiveLock) {
                     const mistakes = game.players[playerId].stats?.wrongAnswers || 1;
@@ -579,6 +681,7 @@ function registerHostHandlers(ctx) {
             game.hostToken = "";
             logEvent(game, ctx, gameId, "game_end", "Partie terminée");
             ctx.persistGame(game);
+            void ctx.persistFinishedGameAnalytics?.(game, "host_end");
             ctx.auditLog("game:ended", { gameId, byRole: role, bySocket: socket.id });
             ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
             callback({ success: true });
@@ -613,6 +716,12 @@ function registerHostHandlers(ctx) {
         const role = game ? ctx.getHostRole(game, hostToken) : null;
         if (game && ctx.hasPermission(role, "control")) {
             game.lastActivity = Date.now();
+            if (!game.buzzedPlayerId) {
+                const currentTrackStat = getCurrentTrackStat(game);
+                if (currentTrackStat) {
+                    currentTrackStat.revealedWithoutAnswer += 1;
+                }
+            }
             game.status = "revealed";
             if (game.youtubeVideoId)
                 game.roundNumber = (game.roundNumber || 1) + 1;
@@ -656,6 +765,7 @@ function registerHostHandlers(ctx) {
                 game.status = "finished";
                 logEvent(game, ctx, gameId, "game_end", game.tournamentMode ? "Grande finale terminée" : "Fin de playlist");
                 ctx.persistGame(game);
+                void ctx.persistFinishedGameAnalytics?.(game, "playlist_end");
                 ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
             }
             callback({ success: true });
@@ -723,6 +833,11 @@ function registerHostHandlers(ctx) {
             textContent: track.textContent !== undefined ? String(track.textContent).substring(0, 2000) : existing.textContent,
             startTime: typeof track.startTime === "number" ? Math.max(0, track.startTime) : existing.startTime,
             url: track.url !== undefined ? String(track.url).substring(0, 500) : existing.url,
+            visualHint: track.visualHint !== undefined ? String(track.visualHint).substring(0, 500) : existing.visualHint,
+            imageRevealMode: track.imageRevealMode !== undefined ? (track.imageRevealMode === "blur" ? "blur" : "none") : existing.imageRevealMode,
+            imageRevealDuration: typeof track.imageRevealDuration === "number"
+                ? Math.max(1, Math.min(300, Math.floor(track.imageRevealDuration)))
+                : existing.imageRevealDuration,
         };
         game.lastActivity = Date.now();
         logEvent(game, ctx, gameId, "track_updated", `Question #${index + 1} modifiée`);
@@ -753,6 +868,11 @@ function registerHostHandlers(ctx) {
             duration: typeof track.duration === "number" ? Math.max(1, Math.min(300, track.duration)) : (game.defaultTrackDuration || 20),
             startTime: typeof track.startTime === "number" ? Math.max(0, track.startTime) : undefined,
             url: track.url ? String(track.url).substring(0, 500) : undefined,
+            visualHint: track.visualHint ? String(track.visualHint).substring(0, 500) : undefined,
+            imageRevealMode: (track.imageRevealMode === "blur" ? "blur" : "none"),
+            imageRevealDuration: typeof track.imageRevealDuration === "number"
+                ? Math.max(1, Math.min(300, Math.floor(track.imageRevealDuration)))
+                : undefined,
         });
         game.lastActivity = Date.now();
         logEvent(game, ctx, gameId, "track_added", `Question ajoutée: ${String(track.title).substring(0, 100)}`);
@@ -818,6 +938,11 @@ function registerHostHandlers(ctx) {
             textContent: t.textContent ? String(t.textContent).substring(0, 2000) : undefined,
             startTime: typeof t.startTime === "number" ? Math.max(0, t.startTime) : undefined,
             url: t.url ? String(t.url).substring(0, 500) : undefined,
+            visualHint: t.visualHint ? String(t.visualHint).substring(0, 500) : undefined,
+            imageRevealMode: (t.imageRevealMode === "blur" ? "blur" : "none"),
+            imageRevealDuration: typeof t.imageRevealDuration === "number"
+                ? Math.max(1, Math.min(300, Math.floor(t.imageRevealDuration)))
+                : undefined,
         }));
         game.playlist = [...current, ...sanitizedUpcoming];
         game.lastActivity = Date.now();
@@ -941,6 +1066,9 @@ function registerHostHandlers(ctx) {
             rssi: game.hardwareDevices[deviceId]?.rssi,
             speakerEnabled: game.hardwareDevices[deviceId]?.speakerEnabled ?? true,
             speakerMuted: game.hardwareDevices[deviceId]?.speakerMuted ?? false,
+            sensitivity: game.hardwareDevices[deviceId]?.sensitivity ?? 5,
+            ledStyle: game.hardwareDevices[deviceId]?.ledStyle ?? "classic",
+            soundStyle: game.hardwareDevices[deviceId]?.soundStyle ?? "default",
         };
         game.lastActivity = Date.now();
         logEvent(game, ctx, gameId, "device_assigned", `${player.name} relié au buzzer ${deviceId}`);
@@ -965,6 +1093,9 @@ function registerHostHandlers(ctx) {
                 name: deviceId,
                 status: "offline",
                 lastSeenAt: Date.now(),
+                sensitivity: 5,
+                ledStyle: "classic",
+                soundStyle: "default",
             };
         }
         if (typeof speakerEnabled === "boolean")
@@ -1024,6 +1155,9 @@ function registerHostHandlers(ctx) {
                 name: deviceId,
                 status: "offline",
                 lastSeenAt: Date.now(),
+                sensitivity: 5,
+                ledStyle: "classic",
+                soundStyle: "default",
             };
         }
         game.hardwareDevices[deviceId].name = name.trim().substring(0, 64);
@@ -1098,6 +1232,11 @@ function registerHostHandlers(ctx) {
             textContent: t.textContent ? String(t.textContent).substring(0, 2000) : undefined,
             duration: typeof t.duration === "number" ? Math.max(1, Math.min(300, t.duration)) : defaultTrackDuration,
             startTime: typeof t.startTime === "number" ? Math.max(0, t.startTime) : undefined,
+            visualHint: t.visualHint ? String(t.visualHint).substring(0, 500) : undefined,
+            imageRevealMode: (t.imageRevealMode === "blur" ? "blur" : "none"),
+            imageRevealDuration: typeof t.imageRevealDuration === "number"
+                ? Math.max(1, Math.min(300, Math.floor(t.imageRevealDuration)))
+                : undefined,
         }));
         const startIndex = game.playlist.length;
         game.playlist.push(...sanitizedTracks);
@@ -1107,12 +1246,206 @@ function registerHostHandlers(ctx) {
             name: name.trim(),
             startIndex,
             endIndex: game.playlist.length - 1,
+            textAnswersEnabled: false,
         });
         game.tournamentMode = true;
         game.lastActivity = Date.now();
         logEvent(game, ctx, gameId, "round_added", `Nouvelle manche ajoutée: ${name}`);
         ctx.persistGame(game);
         ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
+        callback({ success: true });
+    });
+    socket.on("host:setRoundTextMode", (rawPayload, callback) => {
+        const parsed = hostSetRoundTextModeSchema.safeParse(rawPayload);
+        if (!parsed.success)
+            return callback({ success: false, error: "Payload invalide" });
+        const { gameId, hostToken, roundId, enabled } = parsed.data;
+        const game = ctx.activeGames[gameId];
+        const role = game ? ctx.getHostRole(game, hostToken) : null;
+        if (!game || !ctx.hasPermission(role, "control")) {
+            return callback({ success: false, error: "Permission refusée" });
+        }
+        game.rounds = game.rounds || [];
+        const round = game.rounds.find((entry) => entry.id === roundId);
+        if (!round)
+            return callback({ success: false, error: "Manche introuvable" });
+        round.textAnswersEnabled = enabled;
+        game.lastActivity = Date.now();
+        logEvent(game, ctx, gameId, "round_text_mode", `Question ouverte ${enabled ? "activée" : "désactivée"} sur ${round.name}`);
+        ctx.persistGame(game);
+        ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
+        callback({ success: true });
+    });
+    socket.on("host:validateTextAnswer", (rawPayload, callback) => {
+        const parsed = hostValidateTextAnswerSchema.safeParse(rawPayload);
+        if (!parsed.success)
+            return callback({ success: false, error: "Payload invalide" });
+        const { gameId, hostToken, answerId, playerId, isCorrect, points } = parsed.data;
+        const game = ctx.activeGames[gameId];
+        const role = game ? ctx.getHostRole(game, hostToken) : null;
+        if (!game || !ctx.hasPermission(role, "control"))
+            return callback({ success: false, error: "Permission refusée" });
+        const player = game.players[playerId];
+        if (!player)
+            return callback({ success: false, error: "Joueur introuvable" });
+        const queue = Array.isArray(game.textAnswers) ? game.textAnswers : [];
+        game.textAnswers = queue.filter((entry) => entry.id !== answerId);
+        if (isCorrect !== false) {
+            const safePoints = typeof points === "number" ? points : 1;
+            player.score += safePoints;
+            player.stats = player.stats || { buzzes: 0, correctAnswers: 0, wrongAnswers: 0 };
+            player.stats.correctAnswers += 1;
+            logEvent(game, ctx, gameId, "text_answer_ok", `${player.name} +${safePoints} (réponse ouverte validée)`);
+            ctx.io.to(gameId).emit("game:playSound", "correct");
+        }
+        else {
+            player.stats = player.stats || { buzzes: 0, correctAnswers: 0, wrongAnswers: 0 };
+            player.stats.wrongAnswers += 1;
+            logEvent(game, ctx, gameId, "text_answer_ko", `${player.name} réponse ouverte refusée`);
+        }
+        game.lastActivity = Date.now();
+        ctx.persistGame(game);
+        ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
+        callback({ success: true });
+    });
+    socket.on("host:startDuel", (rawPayload, callback) => {
+        const parsed = hostStartDuelSchema.safeParse(rawPayload);
+        if (!parsed.success)
+            return callback({ success: false, error: "Payload invalide" });
+        const { gameId, hostToken, playerAId, playerBId, rewardPoints } = parsed.data;
+        const game = ctx.activeGames[gameId];
+        const role = game ? ctx.getHostRole(game, hostToken) : null;
+        if (!game || !ctx.hasPermission(role, "control"))
+            return callback({ success: false, error: "Permission refusée" });
+        if (!game.players[playerAId] || !game.players[playerBId] || playerAId === playerBId) {
+            return callback({ success: false, error: "Duel invalide" });
+        }
+        game.duelState = {
+            active: true,
+            playerAId,
+            playerBId,
+            startedAt: Date.now(),
+            rewardPoints: rewardPoints || 2,
+        };
+        game.lastActivity = Date.now();
+        logEvent(game, ctx, gameId, "duel_start", `Duel lancé: ${game.players[playerAId].name} vs ${game.players[playerBId].name}`);
+        ctx.persistGame(game);
+        ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
+        callback({ success: true });
+    });
+    socket.on("host:resolveDuel", (rawPayload, callback) => {
+        const parsed = hostResolveDuelSchema.safeParse(rawPayload);
+        if (!parsed.success)
+            return callback({ success: false, error: "Payload invalide" });
+        const { gameId, hostToken, winnerId } = parsed.data;
+        const game = ctx.activeGames[gameId];
+        const role = game ? ctx.getHostRole(game, hostToken) : null;
+        if (!game || !ctx.hasPermission(role, "control"))
+            return callback({ success: false, error: "Permission refusée" });
+        if (!game.duelState?.active)
+            return callback({ success: false, error: "Aucun duel actif" });
+        if (!game.players[winnerId])
+            return callback({ success: false, error: "Gagnant invalide" });
+        const duelPoints = game.duelState.rewardPoints || 2;
+        game.players[winnerId].score += duelPoints;
+        game.duelState = {
+            ...game.duelState,
+            active: false,
+            winnerId,
+        };
+        game.lastActivity = Date.now();
+        logEvent(game, ctx, gameId, "duel_end", `${game.players[winnerId].name} gagne le duel (+${duelPoints})`);
+        ctx.persistGame(game);
+        ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
+        callback({ success: true });
+    });
+    socket.on("host:applyEventPower", (rawPayload, callback) => {
+        const parsed = hostApplyEventPowerSchema.safeParse(rawPayload);
+        if (!parsed.success)
+            return callback({ success: false, error: "Payload invalide" });
+        const { gameId, hostToken, power, targetPlayerId } = parsed.data;
+        const game = ctx.activeGames[gameId];
+        const role = game ? ctx.getHostRole(game, hostToken) : null;
+        if (!game || !ctx.hasPermission(role, "control"))
+            return callback({ success: false, error: "Permission refusée" });
+        const target = game.players[targetPlayerId];
+        if (!target)
+            return callback({ success: false, error: "Joueur cible introuvable" });
+        if (power === "x2") {
+            target.eventPowerDoubleNext = true;
+            logEvent(game, ctx, gameId, "power_x2", `Power-up x2 donné à ${target.name}`);
+        }
+        else if (power === "freeze") {
+            const freezeMs = 8000;
+            target.lockedOut = true;
+            target.frozenUntil = Date.now() + freezeMs;
+            logEvent(game, ctx, gameId, "power_freeze", `${target.name} est gelé ${Math.round(freezeMs / 1000)}s`);
+            setTimeout(() => {
+                const currentGame = ctx.activeGames[gameId];
+                const currentPlayer = currentGame?.players[targetPlayerId];
+                if (!currentGame || !currentPlayer)
+                    return;
+                if ((currentPlayer.frozenUntil || 0) <= Date.now()) {
+                    currentPlayer.lockedOut = false;
+                    currentPlayer.frozenUntil = undefined;
+                    ctx.persistGame(currentGame);
+                    ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(currentGame));
+                }
+            }, freezeMs + 50);
+        }
+        else if (power === "comeback") {
+            const topScore = Math.max(...Object.values(game.players).map((p) => p.score));
+            const gap = Math.max(0, topScore - target.score);
+            const bonus = Math.min(5, Math.max(1, Math.ceil(gap / 2)));
+            target.score += bonus;
+            logEvent(game, ctx, gameId, "power_comeback", `${target.name} reçoit +${bonus} comeback`);
+        }
+        game.lastActivity = Date.now();
+        ctx.persistGame(game);
+        ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
+        callback({ success: true });
+    });
+    socket.on("host:updateDeviceProfile", (rawPayload, callback) => {
+        const parsed = hostUpdateDeviceProfileSchema.safeParse(rawPayload);
+        if (!parsed.success)
+            return callback({ success: false, error: "Payload invalide" });
+        const { gameId, hostToken, deviceId, sensitivity, ledStyle, soundStyle } = parsed.data;
+        const game = ctx.activeGames[gameId];
+        const role = game ? ctx.getHostRole(game, hostToken) : null;
+        if (!game || !ctx.hasPermission(role, "control"))
+            return callback({ success: false, error: "Permission refusée" });
+        game.hardwareDevices = game.hardwareDevices || {};
+        const existing = game.hardwareDevices[deviceId];
+        if (!existing) {
+            game.hardwareDevices[deviceId] = {
+                id: deviceId,
+                name: deviceId,
+                status: "offline",
+                lastSeenAt: Date.now(),
+                sensitivity: sensitivity ?? 5,
+                ledStyle: ledStyle ?? "classic",
+                soundStyle: soundStyle ?? "default",
+            };
+        }
+        else {
+            if (typeof sensitivity === "number")
+                existing.sensitivity = sensitivity;
+            if (ledStyle)
+                existing.ledStyle = ledStyle;
+            if (soundStyle)
+                existing.soundStyle = soundStyle;
+        }
+        game.lastActivity = Date.now();
+        logEvent(game, ctx, gameId, "device_profile", `Profil matériel mis à jour: ${deviceId}`);
+        ctx.persistGame(game);
+        ctx.io.to(gameId).emit("game:hardwareUpdate", game.hardwareDevices);
+        ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
+        ctx.io.of("/devices").to(`device:${deviceId}`).emit("device:profile", {
+            deviceId,
+            sensitivity: game.hardwareDevices[deviceId].sensitivity ?? 5,
+            ledStyle: game.hardwareDevices[deviceId].ledStyle ?? "classic",
+            soundStyle: game.hardwareDevices[deviceId].soundStyle ?? "default",
+        });
         callback({ success: true });
     });
     socket.on("player:useJoker", ({ gameId, playerId, jokerType, targetPlayerId }, callback) => {
@@ -1165,6 +1498,94 @@ function registerHostHandlers(ctx) {
             return callback({ success: true });
         }
         callback({ success: false, error: "Joker inconnu" });
+    });
+    // ── WebRTC mic signaling relay ──────────────────────────────────────────
+    // Host requests to activate a player's mic
+    socket.on("host:requestPlayerMic", (rawPayload, callback) => {
+        const parsed = zod_1.z
+            .object({
+            gameId: zod_1.z.string().min(1).max(10),
+            hostToken: zod_1.z.string().min(10).max(200),
+            playerId: zod_1.z.string().uuid(),
+        })
+            .safeParse(rawPayload);
+        if (!parsed.success)
+            return callback({ success: false, error: "Payload invalide" });
+        const { gameId, hostToken, playerId } = parsed.data;
+        const game = ctx.activeGames[gameId];
+        if (!game)
+            return callback({ success: false, error: "Partie introuvable" });
+        if (!ctx.getHostRole(game, hostToken))
+            return callback({ success: false, error: "Non autorisé" });
+        const player = game.players[playerId];
+        if (!player?.socketId)
+            return callback({ success: false, error: "Joueur introuvable" });
+        ctx.io.to(player.socketId).emit("host:requestPlayerMic", { hostSocketId: socket.id });
+        callback({ success: true });
+    });
+    // Host sends WebRTC answer to player
+    socket.on("host:micAnswer", (rawPayload, callback) => {
+        const parsed = zod_1.z
+            .object({
+            gameId: zod_1.z.string().min(1).max(10),
+            hostToken: zod_1.z.string().min(10).max(200),
+            playerId: zod_1.z.string().uuid(),
+            sdp: zod_1.z.object({ type: zod_1.z.string(), sdp: zod_1.z.string() }),
+        })
+            .safeParse(rawPayload);
+        if (!parsed.success)
+            return callback({ success: false, error: "Payload invalide" });
+        const { gameId, hostToken, playerId, sdp } = parsed.data;
+        const game = ctx.activeGames[gameId];
+        if (!game || !ctx.getHostRole(game, hostToken))
+            return callback({ success: false, error: "Non autorisé" });
+        const player = game.players[playerId];
+        if (!player?.socketId)
+            return callback({ success: false, error: "Joueur introuvable" });
+        ctx.io.to(player.socketId).emit("player:micAnswer", { sdp });
+        callback({ success: true });
+    });
+    // Host sends ICE candidate to player
+    socket.on("host:micIceCandidate", (rawPayload, callback) => {
+        const parsed = zod_1.z
+            .object({
+            gameId: zod_1.z.string().min(1).max(10),
+            hostToken: zod_1.z.string().min(10).max(200),
+            playerId: zod_1.z.string().uuid(),
+            candidate: zod_1.z.any(),
+        })
+            .safeParse(rawPayload);
+        if (!parsed.success)
+            return callback({ success: false, error: "Payload invalide" });
+        const { gameId, hostToken, playerId, candidate } = parsed.data;
+        const game = ctx.activeGames[gameId];
+        if (!game || !ctx.getHostRole(game, hostToken))
+            return callback({ success: false, error: "Non autorisé" });
+        const player = game.players[playerId];
+        if (!player?.socketId)
+            return callback({ success: false, error: "Joueur introuvable" });
+        ctx.io.to(player.socketId).emit("player:micIceCandidate", { candidate });
+        callback({ success: true });
+    });
+    // Host stops the player mic
+    socket.on("host:stopPlayerMic", (rawPayload, callback) => {
+        const parsed = zod_1.z
+            .object({
+            gameId: zod_1.z.string().min(1).max(10),
+            hostToken: zod_1.z.string().min(10).max(200),
+            playerId: zod_1.z.string().uuid(),
+        })
+            .safeParse(rawPayload);
+        if (!parsed.success)
+            return callback({ success: false, error: "Payload invalide" });
+        const { gameId, hostToken, playerId } = parsed.data;
+        const game = ctx.activeGames[gameId];
+        if (!game || !ctx.getHostRole(game, hostToken))
+            return callback({ success: false, error: "Non autorisé" });
+        const player = game.players[playerId];
+        if (player?.socketId)
+            ctx.io.to(player.socketId).emit("player:micStop");
+        callback({ success: true });
     });
     socket.on("disconnect", () => {
         const currentGameId = socket.data.hostGameId;

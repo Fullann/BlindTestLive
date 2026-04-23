@@ -17,11 +17,15 @@ export interface Track {
   duration?: number; // Time allowed for this track in seconds
   startTime?: number; // Start time in seconds for audio/video
   url?: string; // Legacy URL
+  visualHint?: string; // Hint displayed for visual quiz rounds
+  imageRevealMode?: 'none' | 'blur';
+  imageRevealDuration?: number; // seconds to progressively remove blur
 }
 
 export interface Player {
   id: string; // Persistent UUID
   socketId: string; // Current socket connection
+  publicId?: string; // Anonymous persistent ID (no account required)
   name: string;
   color: string;
   score: number;
@@ -42,6 +46,8 @@ export interface Player {
   };
   deviceType?: 'mobile' | 'esp32';
   buzzerDeviceId?: string;
+  eventPowerDoubleNext?: boolean;
+  frozenUntil?: number;
 }
 
 export interface TeamConfig {
@@ -64,6 +70,26 @@ export interface HardwareDeviceState {
   rssi?: number;
   speakerEnabled?: boolean;
   speakerMuted?: boolean;
+  sensitivity?: number;
+  ledStyle?: 'classic' | 'pulse' | 'rainbow';
+  soundStyle?: 'default' | 'arcade' | 'soft';
+}
+
+export interface TextAnswerSubmission {
+  id: string;
+  playerId: string;
+  playerName: string;
+  answer: string;
+  createdAt: number;
+}
+
+export interface DuelState {
+  active: boolean;
+  playerAId: string;
+  playerBId: string;
+  startedAt: number;
+  winnerId?: string;
+  rewardPoints?: number;
 }
 
 export interface GameState {
@@ -94,6 +120,7 @@ export interface GameState {
   onboardingEnabled?: boolean;
   tutorialSeconds?: number;
   tournamentMode?: boolean;
+  strictTimerEnabled?: boolean;
   rules?: {
     wrongAnswerPenalty: number;
     progressiveLock: boolean;
@@ -105,8 +132,24 @@ export interface GameState {
     name: string;
     startIndex: number;
     endIndex: number;
+    textAnswersEnabled?: boolean;
   }>;
   hardwareDevices?: Record<string, HardwareDeviceState>;
+  trackStats?: Record<string, {
+    trackIndex: number;
+    trackId?: string;
+    title: string;
+    artist: string;
+    playedCount: number;
+    totalBuzzes: number;
+    correctAnswers: number;
+    wrongAnswers: number;
+    revealedWithoutAnswer: number;
+    fastestBuzzMs?: number;
+    fastestBuzzPlayerId?: string;
+  }>;
+  textAnswers?: TextAnswerSubmission[];
+  duelState?: DuelState | null;
 }
 
 export interface Playlist {

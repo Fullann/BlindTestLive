@@ -46,6 +46,7 @@ const Sentry = __importStar(require("@sentry/node"));
 const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const helmet_1 = __importDefault(require("helmet"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
+const crypto_1 = __importDefault(require("crypto"));
 const game_state_1 = require("./server/socket/game-state");
 const host_1 = require("./server/socket/host");
 const player_1 = require("./server/socket/player");
@@ -56,6 +57,8 @@ const auth_1 = __importDefault(require("./server/routes/auth"));
 const playlists_1 = __importDefault(require("./server/routes/playlists"));
 const blindtests_1 = __importDefault(require("./server/routes/blindtests"));
 const hardware_1 = __importDefault(require("./server/routes/hardware"));
+const events_1 = __importDefault(require("./server/routes/events"));
+const player_profiles_1 = __importDefault(require("./server/routes/player-profiles"));
 const PORT = Number(process.env.PORT || 5174);
 const DATA_DIR = path_1.default.resolve(process.cwd(), "data");
 const GAMES_FILE = path_1.default.join(DATA_DIR, "games.json");
@@ -98,6 +101,8 @@ const metrics = {
     gamesCreated: 0,
 };
 const connectedDeviceSockets = new Map();
+let analyticsSchemaChecked = false;
+let dbPool = null;
 function auditLog(event, data) {
     metrics.eventsTotal += 1;
     if (event === "game:created")
@@ -254,12 +259,53 @@ function isAllowedOrigin(originHeader) {
         return true;
     return allowedOrigins.includes(originHeader);
 }
+async function ensureAnalyticsSchema() {
+    if (analyticsSchemaChecked || !dbPool)
+        return;
+    await dbPool.query(`CREATE TABLE IF NOT EXISTS game_analytics (
+      id VARCHAR(36) NOT NULL PRIMARY KEY,
+      game_id VARCHAR(10) NOT NULL,
+      ended_reason VARCHAR(64) NOT NULL,
+      players_count INT NOT NULL DEFAULT 0,
+      total_buzzes INT NOT NULL DEFAULT 0,
+      total_correct INT NOT NULL DEFAULT 0,
+      total_wrong INT NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL,
+      INDEX idx_game_analytics_game (game_id),
+      INDEX idx_game_analytics_created (created_at)
+    )`);
+    await dbPool.query(`CREATE TABLE IF NOT EXISTS game_player_analytics (
+      id VARCHAR(36) NOT NULL PRIMARY KEY,
+      analytics_id VARCHAR(36) NOT NULL,
+      player_id VARCHAR(100) NOT NULL,
+      public_id VARCHAR(64) NULL,
+      player_name VARCHAR(64) NOT NULL,
+      score INT NOT NULL DEFAULT 0,
+      buzzes INT NOT NULL DEFAULT 0,
+      correct_answers INT NOT NULL DEFAULT 0,
+      wrong_answers INT NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL,
+      INDEX idx_game_player_analytics_analytics (analytics_id),
+      INDEX idx_game_player_analytics_public (public_id)
+    )`);
+    analyticsSchemaChecked = true;
+}
 async function startServer() {
     loadGamesFromDisk();
     if (process.env.SENTRY_DSN) {
         Sentry.init({ dsn: process.env.SENTRY_DSN });
     }
     const app = (0, express_1.default)();
+    if (ENABLE_DB) {
+        const dbModule = await Promise.resolve().then(() => __importStar(require("./server/db")));
+        dbPool = dbModule.default;
+        try {
+            await ensureAnalyticsSchema();
+        }
+        catch (error) {
+            console.warn("Analytics schema init skipped:", error);
+        }
+    }
     app.use((0, helmet_1.default)({
         contentSecurityPolicy: false,
         crossOriginEmbedderPolicy: false,
@@ -306,9 +352,11 @@ async function startServer() {
         app.use("/api/playlists", playlists_1.default);
         app.use("/api/blindtests", blindtests_1.default);
         app.use("/api/hardware", hardware_1.default);
+        app.use("/api/events", events_1.default);
+        app.use("/api/player-profiles", player_profiles_1.default);
     }
     else {
-        app.use(["/api/auth", "/api/playlists", "/api/blindtests", "/api/hardware"], (_req, res) => {
+        app.use(["/api/auth", "/api/playlists", "/api/blindtests", "/api/hardware", "/api/events", "/api/player-profiles"], (_req, res) => {
             res.status(503).json({
                 error: "Base de données désactivée en mode dev. Lance avec ENABLE_DB=true pour activer ces routes.",
             });
@@ -359,6 +407,40 @@ async function startServer() {
             buzzRateLimitsBySocket,
             buzzRateLimitsByIp,
             auditLog,
+            persistFinishedGameAnalytics: async (game, reason) => {
+                if (!ENABLE_DB || !dbPool)
+                    return;
+                try {
+                    await ensureAnalyticsSchema();
+                    const analyticsId = crypto_1.default.randomUUID();
+                    const now = Date.now();
+                    const players = Object.values(game.players || {});
+                    const totalBuzzes = players.reduce((sum, player) => sum + Number(player.stats?.buzzes || 0), 0);
+                    const totalCorrect = players.reduce((sum, player) => sum + Number(player.stats?.correctAnswers || 0), 0);
+                    const totalWrong = players.reduce((sum, player) => sum + Number(player.stats?.wrongAnswers || 0), 0);
+                    await dbPool.query(`INSERT INTO game_analytics (id, game_id, ended_reason, players_count, total_buzzes, total_correct, total_wrong, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [analyticsId, game.id, reason.slice(0, 64), players.length, totalBuzzes, totalCorrect, totalWrong, now]);
+                    for (const player of players) {
+                        await dbPool.query(`INSERT INTO game_player_analytics
+                 (id, analytics_id, player_id, public_id, player_name, score, buzzes, correct_answers, wrong_answers, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+                            crypto_1.default.randomUUID(),
+                            analyticsId,
+                            player.id,
+                            player.publicId || null,
+                            String(player.name || "Joueur").slice(0, 64),
+                            Number(player.score || 0),
+                            Number(player.stats?.buzzes || 0),
+                            Number(player.stats?.correctAnswers || 0),
+                            Number(player.stats?.wrongAnswers || 0),
+                            now,
+                        ]);
+                    }
+                }
+                catch (error) {
+                    console.warn("persistFinishedGameAnalytics failed:", error);
+                }
+            },
         };
         (0, host_1.registerHostHandlers)(socketContext);
         (0, player_1.registerPlayerHandlers)(socketContext);

@@ -23,6 +23,7 @@ export interface SocketHandlerContext {
   buzzRateLimitsBySocket: Map<string, number>;
   buzzRateLimitsByIp: Map<string, number>;
   auditLog: (event: string, data: Record<string, unknown>) => void;
+  persistFinishedGameAnalytics?: (game: ServerGameState, reason: string) => Promise<void> | void;
 }
 
 export type PlayerMap = Record<string, Player>;

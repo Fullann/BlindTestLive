@@ -167,5 +167,91 @@ export const api = {
 
     forceEnd: (id: string) =>
       request<{ success: boolean; endedAt: number }>('POST', `/api/blindtests/${id}/force-end`),
+
+    stats: () =>
+      request<{
+        overview: {
+          totalSessions: number;
+          finishedSessions: number;
+          activeSessions: number;
+          avgSessionDurationMs: number;
+          avgResponseMs: number;
+          totalBuzzes: number;
+          totalCorrect: number;
+          totalWrong: number;
+        };
+        topFastPlayers: Array<{ id: string; name: string; buzzes: number; avgResponseMs: number }>;
+        topFastTracks: Array<{
+          trackIndex: number;
+          title: string;
+          artist: string;
+          fastestBuzzMs?: number;
+          revealedWithoutAnswer: number;
+          wrongAnswers: number;
+          totalBuzzes: number;
+          correctAnswers: number;
+        }>;
+        topHardTracks: Array<{
+          trackIndex: number;
+          title: string;
+          artist: string;
+          fastestBuzzMs?: number;
+          revealedWithoutAnswer: number;
+          wrongAnswers: number;
+          totalBuzzes: number;
+          correctAnswers: number;
+        }>;
+        coverage: {
+          sessionsWithRealtimeStats: number;
+          totalSessions: number;
+        };
+      }>('GET', '/api/blindtests/stats'),
+  },
+
+  events: {
+    listTournaments: () =>
+      request<{ tournaments: any[] }>('GET', '/api/events/tournaments'),
+
+    createTournament: (data: { name: string; startsAt?: number; endsAt?: number }) =>
+      request<{ tournament: any }>('POST', '/api/events/tournaments', data),
+
+    attachSessionToTournament: (tournamentId: string, blindtestId: string) =>
+      request<{ success: boolean }>('POST', `/api/events/tournaments/${tournamentId}/sessions`, { blindtestId }),
+
+    getTournamentLeaderboard: (tournamentId: string) =>
+      request<{ tournament: any; sessions: any[]; leaderboard: any[] }>('GET', `/api/events/tournaments/${tournamentId}/leaderboard`),
+
+    getBranding: (blindtestId: string) =>
+      request<{ branding: any }>('GET', `/api/events/branding/${blindtestId}`),
+
+    saveBranding: (
+      blindtestId: string,
+      data: { clientName?: string; logoUrl?: string; primaryColor?: string; accentColor?: string },
+    ) => request<{ success: boolean }>('PUT', `/api/events/branding/${blindtestId}`, data),
+
+    getBrandingByGame: (gameId: string) =>
+      request<{ branding: any }>('GET', `/api/events/branding/by-game/${gameId}`),
+
+    getReport: (blindtestId: string) =>
+      request<{ blindtest: any; branding: any; kpi: any; topPlayers: any[] }>('GET', `/api/events/report/${blindtestId}`),
+  },
+
+  playerProfiles: {
+    claim: (data: {
+      publicId: string;
+      nickname: string;
+      gameId: string;
+      playerName: string;
+      score: number;
+      buzzes: number;
+      correctAnswers: number;
+      wrongAnswers: number;
+    }) => request<{ success: boolean }>('POST', '/api/player-profiles/claim', data),
+
+    get: (publicId: string) =>
+      request<{ profile: any }>('GET', `/api/player-profiles/${encodeURIComponent(publicId)}`),
+
+    history: (publicId: string) =>
+      request<{ sessions: any[] }>('GET', `/api/player-profiles/${encodeURIComponent(publicId)}/history`),
   },
 };

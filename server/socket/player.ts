@@ -7,8 +7,15 @@ const playerJoinSchema = z.object({
   gameId: z.string().min(1).max(10),
   playerId: z.string().min(1).max(100).optional(),
   playerSecret: z.string().min(1).max(200).optional(),
+  publicId: z.string().min(1).max(64).optional(),
   name: z.string().min(1).max(20),
   team: z.string().min(1).max(32).optional(),
+});
+
+const submitTextAnswerSchema = z.object({
+  gameId: z.string().min(1).max(10),
+  playerId: z.string().min(1).max(100),
+  answer: z.string().min(1).max(200),
 });
 
 export function registerPlayerHandlers(ctx: SocketHandlerContext) {
@@ -33,12 +40,45 @@ export function registerPlayerHandlers(ctx: SocketHandlerContext) {
     ctx.io.to(gameId).emit("game:eventLogs", game.eventLogs);
   };
 
+  const getCurrentTrackStat = (gameId: string) => {
+    const game = activeGames[gameId];
+    if (!game || !Array.isArray(game.playlist) || game.playlist.length === 0) return null;
+    const trackIndex = game.currentTrackIndex;
+    const track = game.playlist[trackIndex];
+    if (!track) return null;
+    if (!game.trackStats) game.trackStats = {};
+    const key = String(trackIndex);
+    if (!game.trackStats[key]) {
+      game.trackStats[key] = {
+        trackIndex,
+        trackId: track.id,
+        title: track.title || `Piste ${trackIndex + 1}`,
+        artist: track.artist || "",
+        playedCount: 0,
+        totalBuzzes: 0,
+        correctAnswers: 0,
+        wrongAnswers: 0,
+        revealedWithoutAnswer: 0,
+      };
+    }
+    return game.trackStats[key];
+  };
+
+  const isTextAnswerEnabledForCurrentRound = (gameId: string) => {
+    const game = activeGames[gameId];
+    if (!game || !Array.isArray(game.rounds) || game.rounds.length === 0) return false;
+    const round = game.rounds.find(
+      (entry) => game.currentTrackIndex >= entry.startIndex && game.currentTrackIndex <= entry.endIndex,
+    );
+    return !!round?.textAnswersEnabled;
+  };
+
   socket.on("player:joinGame", (rawPayload, callback: Ack) => {
     const parsed = playerJoinSchema.safeParse(rawPayload);
     if (!parsed.success) {
       return callback({ success: false, error: "Payload joueur invalide" });
     }
-    const { gameId, playerId, playerSecret, name, team } = parsed.data;
+    const { gameId, playerId, playerSecret, publicId, name, team } = parsed.data;
     const game = activeGames[gameId];
     if (!game) {
       return callback({ success: false, error: "Game not found" });
@@ -62,6 +102,7 @@ export function registerPlayerHandlers(ctx: SocketHandlerContext) {
 
       game.players[playerId].socketId = socket.id;
       game.players[playerId].name = sanitizedName;
+      if (publicId) game.players[playerId].publicId = publicId;
       if (sanitizedTeam) game.players[playerId].team = sanitizedTeam;
       game.players[playerId].stats = game.players[playerId].stats || { buzzes: 0, correctAnswers: 0, wrongAnswers: 0 };
       game.players[playerId].deviceType = game.players[playerId].buzzerDeviceId ? "esp32" : "mobile";
@@ -79,6 +120,7 @@ export function registerPlayerHandlers(ctx: SocketHandlerContext) {
       id: newPlayerId,
       socketId: socket.id,
       name: sanitizedName,
+      publicId,
       color: getRandomColor(),
       score: 0,
       lockedOut: false,
@@ -116,6 +158,12 @@ export function registerPlayerHandlers(ctx: SocketHandlerContext) {
     if (!game) return callback({ success: false, error: "Game not found" });
 
     const player = game.players[playerId];
+    if (player?.frozenUntil && player.frozenUntil > now) {
+      player.lockedOut = true;
+    } else if (player?.frozenUntil && player.frozenUntil <= now) {
+      player.frozenUntil = undefined;
+      player.lockedOut = false;
+    }
     if (!player || player.lockedOut || player.socketId !== socket.id) {
       return callback({ success: false, error: "Buzz refusé" });
     }
@@ -144,6 +192,20 @@ export function registerPlayerHandlers(ctx: SocketHandlerContext) {
     if (game.status === "playing" && !game.buzzedPlayerId) {
       player.stats = player.stats || { buzzes: 0, correctAnswers: 0, wrongAnswers: 0 };
       player.stats.buzzes += 1;
+      const currentTrackStat = getCurrentTrackStat(gameId);
+      if (currentTrackStat) {
+        currentTrackStat.totalBuzzes += 1;
+        currentTrackStat.title = game.playlist[game.currentTrackIndex]?.title || currentTrackStat.title;
+        currentTrackStat.artist = game.playlist[game.currentTrackIndex]?.artist || currentTrackStat.artist;
+        currentTrackStat.trackId = game.playlist[game.currentTrackIndex]?.id || currentTrackStat.trackId;
+        if (game.trackStartTime) {
+          const responseMs = Math.max(0, Date.now() - game.trackStartTime);
+          if (currentTrackStat.fastestBuzzMs === undefined || responseMs < currentTrackStat.fastestBuzzMs) {
+            currentTrackStat.fastestBuzzMs = responseMs;
+            currentTrackStat.fastestBuzzPlayerId = playerId;
+          }
+        }
+      }
       game.status = "paused";
       game.buzzedPlayerId = playerId;
       game.buzzTimestamp = Date.now();
@@ -155,5 +217,105 @@ export function registerPlayerHandlers(ctx: SocketHandlerContext) {
     } else {
       callback({ success: false, error: "Buzz non disponible" });
     }
+  });
+
+  socket.on("player:submitTextAnswer", (rawPayload, callback: Ack) => {
+    const parsed = submitTextAnswerSchema.safeParse(rawPayload);
+    if (!parsed.success) {
+      return callback({ success: false, error: "Payload invalide" });
+    }
+    const { gameId, playerId, answer } = parsed.data;
+    const game = activeGames[gameId];
+    if (!game) return callback({ success: false, error: "Partie introuvable" });
+    const player = game.players[playerId];
+    if (!player || player.socketId !== socket.id) {
+      return callback({ success: false, error: "Joueur invalide" });
+    }
+    if (!["playing", "paused"].includes(game.status)) {
+      return callback({ success: false, error: "Question ouverte indisponible" });
+    }
+    if (!isTextAnswerEnabledForCurrentRound(gameId)) {
+      return callback({ success: false, error: "Question ouverte désactivée pour cette manche" });
+    }
+    const cleanAnswer = answer.trim().slice(0, 200);
+    if (!cleanAnswer) return callback({ success: false, error: "Réponse vide" });
+    game.textAnswers = Array.isArray(game.textAnswers) ? game.textAnswers : [];
+    game.textAnswers.unshift({
+      id: crypto.randomUUID(),
+      playerId: player.id,
+      playerName: player.name,
+      answer: cleanAnswer,
+      createdAt: Date.now(),
+    });
+    game.textAnswers = game.textAnswers.slice(0, 100);
+    game.lastActivity = Date.now();
+    persistGame(game);
+    pushGameLog(gameId, "text_answer", `${player.name} a envoyé une réponse texte`);
+    ctx.io.to(gameId).emit("game:stateUpdate", sanitizeGameState(game));
+    callback({ success: true });
+  });
+
+  // ── WebRTC mic signaling relay (player → host) ──────────────────────────
+  // Player sends WebRTC offer to host
+  socket.on("player:micOffer", (rawPayload, callback: Ack) => {
+    const parsed = z
+      .object({
+        gameId: z.string().min(1).max(10),
+        playerId: z.string().min(1).max(100),
+        sdp: z.object({ type: z.string(), sdp: z.string() }),
+      })
+      .safeParse(rawPayload);
+    if (!parsed.success) return callback({ success: false, error: "Payload invalide" });
+    const { gameId, playerId, sdp } = parsed.data;
+    const game = ctx.activeGames[gameId];
+    if (!game) return callback({ success: false, error: "Partie introuvable" });
+    const player = game.players[playerId];
+    if (!player || player.socketId !== socket.id) return callback({ success: false, error: "Non autorisé" });
+    // Relay to host socket (adminId is updated on each host:joinGame)
+    if (game.adminId) {
+      ctx.io.to(game.adminId).emit("player:micOffer", { playerId, sdp });
+    }
+    callback({ success: true });
+  });
+
+  // Player sends ICE candidate to host
+  socket.on("player:micIceCandidate", (rawPayload, callback: Ack) => {
+    const parsed = z
+      .object({
+        gameId: z.string().min(1).max(10),
+        playerId: z.string().min(1).max(100),
+        candidate: z.any(),
+      })
+      .safeParse(rawPayload);
+    if (!parsed.success) return callback({ success: false, error: "Payload invalide" });
+    const { gameId, playerId, candidate } = parsed.data;
+    const game = ctx.activeGames[gameId];
+    if (!game) return callback({ success: false, error: "Partie introuvable" });
+    const player = game.players[playerId];
+    if (!player || player.socketId !== socket.id) return callback({ success: false, error: "Non autorisé" });
+    if (game.adminId) {
+      ctx.io.to(game.adminId).emit("player:micIceCandidate", { playerId, candidate });
+    }
+    callback({ success: true });
+  });
+
+  // Player notifies host that mic was stopped
+  socket.on("player:micStopped", (rawPayload, callback: Ack) => {
+    const parsed = z
+      .object({
+        gameId: z.string().min(1).max(10),
+        playerId: z.string().min(1).max(100),
+      })
+      .safeParse(rawPayload);
+    if (!parsed.success) return callback({ success: false, error: "Payload invalide" });
+    const { gameId, playerId } = parsed.data;
+    const game = ctx.activeGames[gameId];
+    if (!game) return callback({ success: false, error: "Partie introuvable" });
+    const player = game.players[playerId];
+    if (!player || player.socketId !== socket.id) return callback({ success: false, error: "Non autorisé" });
+    if (game.adminId) {
+      ctx.io.to(game.adminId).emit("player:micStopped", { playerId });
+    }
+    callback({ success: true });
   });
 }

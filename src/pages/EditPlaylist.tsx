@@ -44,10 +44,14 @@ export default function EditPlaylist() {
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
   const [activeAccept, setActiveAccept] = useState<string>('*');
   const [defaultDuration, setDefaultDuration] = useState<number>(30);
+  const [defaultQuestionType, setDefaultQuestionType] = useState<MediaType>('audio');
+  const [defaultImageRevealMode, setDefaultImageRevealMode] = useState<'none' | 'blur'>('none');
+  const [defaultImageRevealDuration, setDefaultImageRevealDuration] = useState<number>(15);
   const [duplicateKeys, setDuplicateKeys] = useState<Set<string>>(new Set());
   const [localPreviewUrls, setLocalPreviewUrls] = useState<Record<string, string>>({});
   const previewUrlsRef = useRef<Record<string, string>>({});
   const collabToken = searchParams.get('collab') || '';
+  const [activeCollabToken, setActiveCollabToken] = useState(collabToken);
   const [collabLink, setCollabLink] = useState('');
   const [collabEditorsCount, setCollabEditorsCount] = useState(1);
   const [youtubePreviewSeedByTrack, setYoutubePreviewSeedByTrack] = useState<Record<string, number>>({});
@@ -73,30 +77,34 @@ export default function EditPlaylist() {
   };
 
   useEffect(() => {
+    setActiveCollabToken(collabToken);
+  }, [collabToken]);
+
+  useEffect(() => {
     const fetchPlaylist = async () => {
       if (!playlistId) return;
       if (!user) { navigate('/'); return; }
       try {
-        const { playlist: data } = collabToken
-          ? await api.playlists.getWithCollab(playlistId, collabToken)
+        const { playlist: data } = activeCollabToken
+          ? await api.playlists.getWithCollab(playlistId, activeCollabToken)
           : await api.playlists.get(playlistId);
-        if (!data) { navigate('/admin'); return; }
+        if (!data) { navigate('/playlists'); return; }
         const parsed = toPlaylistObj(data);
-        if (parsed.ownerId !== user.id && !collabToken) { navigate('/admin'); return; }
+        if (parsed.ownerId !== user.id && !activeCollabToken) { navigate('/playlists'); return; }
         setPlaylist(parsed);
       } catch (error) {
         console.error("Error fetching playlist:", error);
-        navigate('/admin');
+        navigate('/playlists');
       } finally {
         setLoading(false);
       }
     };
     fetchPlaylist();
-  }, [playlistId, navigate, user, collabToken]);
+  }, [playlistId, navigate, user, activeCollabToken]);
 
   useEffect(() => {
-    if (!playlistId || !collabToken) return;
-    socket.emit('playlist:join', { playlistId, collabToken }, (res: any) => {
+    if (!playlistId || !activeCollabToken) return;
+    socket.emit('playlist:join', { playlistId, collabToken: activeCollabToken }, (res: any) => {
       if (!res?.success) {
         toastError(res?.error || 'Impossible de rejoindre la coédition');
         return;
@@ -122,10 +130,10 @@ export default function EditPlaylist() {
       socket.off('playlist:state', onPlaylistState);
       socket.off('playlist:presence', onPlaylistPresence);
     };
-  }, [playlistId, collabToken]);
+  }, [playlistId, activeCollabToken, toastError, toastInfo]);
 
   useEffect(() => {
-    if (!playlist || !playlistId || !collabToken) return;
+    if (!playlist || !playlistId || !activeCollabToken) return;
     if (isApplyingRemoteRef.current) {
       isApplyingRemoteRef.current = false;
       return;
@@ -136,7 +144,7 @@ export default function EditPlaylist() {
         'playlist:update',
         {
           playlistId,
-          collabToken,
+          collabToken: activeCollabToken,
           data: {
             name: playlist.name,
             category: playlist.category || 'general',
@@ -149,7 +157,7 @@ export default function EditPlaylist() {
     return () => {
       if (saveDebounceRef.current) window.clearTimeout(saveDebounceRef.current);
     };
-  }, [playlist, playlistId, collabToken]);
+  }, [playlist, playlistId, activeCollabToken]);
 
   useEffect(() => {
     if (!playlist) return;
@@ -174,8 +182,8 @@ export default function EditPlaylist() {
     if (!playlist || !playlistId) return;
     setSaving(true);
     try {
-      if (collabToken) {
-        await api.playlists.updateWithCollab(playlistId, collabToken, {
+      if (activeCollabToken) {
+        await api.playlists.updateWithCollab(playlistId, activeCollabToken, {
           name: playlist.name,
           tracks: playlist.tracks,
           category: playlist.category || 'general',
@@ -188,7 +196,7 @@ export default function EditPlaylist() {
         });
       }
       toastSuccess('Playlist sauvegardée');
-      navigate('/admin');
+      navigate('/playlists');
     } catch (error) {
       console.error("Error saving playlist:", error);
       toastError("Erreur lors de la sauvegarde");
@@ -200,9 +208,10 @@ export default function EditPlaylist() {
   const handleCreateCollabLink = async () => {
     if (!playlistId) return;
     try {
-      const { token } = await api.playlists.createCollabToken(playlistId);
+      const token = activeCollabToken || (await api.playlists.createCollabToken(playlistId)).token;
       const link = `${window.location.origin}/admin/playlist/${playlistId}?collab=${encodeURIComponent(token)}`;
       setCollabLink(link);
+      setActiveCollabToken(token);
       await navigator.clipboard.writeText(link);
       toastSuccess('Lien de coédition copié');
     } catch (error: any) {
@@ -212,15 +221,48 @@ export default function EditPlaylist() {
 
   const addTrack = () => {
     if (!playlist) return;
+    const nextTrackDefaults: Partial<Track> =
+      defaultQuestionType === 'image'
+        ? {
+            imageRevealMode: defaultImageRevealMode,
+            imageRevealDuration: defaultImageRevealDuration,
+          }
+        : {};
     const newTrack: Track = {
       id: uuidv4(),
       title: '',
       artist: '',
-      mediaType: 'youtube',
+      mediaType: defaultQuestionType,
       duration: defaultDuration,
       startTime: 0,
+      ...nextTrackDefaults,
     };
     setPlaylist({ ...playlist, tracks: [...playlist.tracks, newTrack] });
+  };
+
+  const applyDefaultsToAllTracks = () => {
+    if (!playlist || playlist.tracks.length === 0) return;
+    const nextTracks = playlist.tracks.map((track) => {
+      const base: Track = {
+        ...track,
+        mediaType: defaultQuestionType,
+        duration: defaultDuration,
+      };
+      if (defaultQuestionType === 'image') {
+        return {
+          ...base,
+          imageRevealMode: defaultImageRevealMode,
+          imageRevealDuration: defaultImageRevealDuration,
+        };
+      }
+      return {
+        ...base,
+        imageRevealMode: track.imageRevealMode,
+        imageRevealDuration: track.imageRevealDuration,
+      };
+    });
+    setPlaylist({ ...playlist, tracks: nextTracks });
+    toastSuccess('Configuration par défaut appliquée à toutes les questions');
   };
 
   const removeTrack = (trackId: string) => {
@@ -251,15 +293,17 @@ export default function EditPlaylist() {
 
     try {
       const previewUrl = URL.createObjectURL(file);
+      // Store blob URL locally ONLY — never push it into the shared track state
+      // so co-editors never receive a blob: URL they can't access.
       setLocalPreviewUrls((prev) => {
         if (prev[trackId]) URL.revokeObjectURL(prev[trackId]);
         return { ...prev, [trackId]: previewUrl };
       });
-      updateTrack(trackId, { mediaUrl: previewUrl, url: previewUrl });
 
       setUploadProgress(prev => ({ ...prev, [trackId]: 10 }));
       const { url } = await api.playlists.upload(playlistId, file);
       setUploadProgress(prev => ({ ...prev, [trackId]: 100 }));
+      // Only now update the shared track state with the real server URL
       updateTrack(trackId, { mediaUrl: url, url });
       setLocalPreviewUrls((prev) => {
         if (prev[trackId]) URL.revokeObjectURL(prev[trackId]);
@@ -338,78 +382,139 @@ export default function EditPlaylist() {
   if (!playlist) return <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">Playlist introuvable</div>;
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white p-6 app-shell">
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-4 flex-1 min-w-0">
-            <button onClick={() => navigate('/admin')} className="p-2 hover:bg-zinc-800 rounded-full transition-colors flex-shrink-0">
-              <ArrowLeft className="w-6 h-6" />
-            </button>
-            <input
-              type="text"
-              value={playlist.name}
-              onChange={(e) => setPlaylist({ ...playlist, name: e.target.value })}
-              className="bg-transparent text-2xl font-bold focus:outline-none focus:border-b-2 border-indigo-500 min-w-0 flex-1"
-            />
+    <div className="min-h-screen bg-zinc-950 text-white app-shell">
+      {/* Breadcrumb header */}
+      <header className="sticky top-0 z-20 bg-zinc-950/90 backdrop-blur border-b border-white/5 px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={() => navigate('/playlists')} className="flex items-center gap-1.5 text-zinc-500 hover:text-zinc-300 transition-colors text-sm">
+            <ArrowLeft className="w-4 h-4" />
+            Mes playlists
+          </button>
+          <span className="text-zinc-700">/</span>
+          <span className="text-zinc-200 text-sm font-medium truncate max-w-xs">{playlist.name || 'Sans titre'}</span>
+          {collabEditorsCount > 1 && (
+            <span className="text-xs bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 px-2 py-0.5 rounded-full">
+              {collabEditorsCount} éditeurs en ligne
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => void handleSave()}
+          disabled={saving}
+          className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors"
+        >
+          <Save className="w-4 h-4" />
+          {saving ? 'Sauvegarde…' : 'Sauvegarder'}
+        </button>
+      </header>
+
+      <div className="max-w-4xl mx-auto px-6 py-8">
+        {/* Nom + catégorie */}
+        <div className="flex items-center gap-4 mb-6">
+          <input
+            type="text"
+            value={playlist.name}
+            onChange={(e) => setPlaylist({ ...playlist, name: e.target.value })}
+            className="bg-transparent text-2xl font-bold focus:outline-none border-b-2 border-transparent focus:border-indigo-500 flex-1 min-w-0 transition-colors"
+            placeholder="Nom de la playlist"
+          />
             <input
               type="text"
               value={playlist.category || 'general'}
               onChange={(e) => setPlaylist({ ...playlist, category: e.target.value })}
-              className="ml-3 app-input bg-zinc-900/70 border border-white/10 rounded-lg px-3 py-1.5 text-sm max-w-[180px]"
+              className="bg-zinc-900 border border-white/10 rounded-xl px-3 py-2 text-sm w-36"
               placeholder="Catégorie"
             />
           </div>
-          <div className="flex items-center gap-4 flex-shrink-0 ml-4">
-            {playlist.ownerId === user?.id && (
-              <button
-                onClick={handleCreateCollabLink}
-                className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-full font-medium transition-colors"
-                title="Générer un lien pour coéditer en temps réel"
-              >
-                <Link className="w-4 h-4" />
-                Lien coédition
-              </button>
-            )}
-            <div className="flex items-center gap-2">
-              <label className="text-sm text-zinc-400">Durée par défaut :</label>
-              <input
-                type="number"
-                value={defaultDuration}
-                onChange={(e) => setDefaultDuration(parseInt(e.target.value) || 30)}
-                className="w-16 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-white focus:outline-none focus:border-indigo-500 text-sm"
-                min="5"
-                max="300"
-              />
-              <span className="text-sm text-zinc-400">s</span>
-              <button
-                onClick={() => setPlaylist({ ...playlist, tracks: playlist.tracks.map(t => ({ ...t, duration: defaultDuration })) })}
-                className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2 py-1 rounded transition-colors"
-                title="Appliquer à toutes les pistes"
-              >
-                Tout
-              </button>
-            </div>
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-full font-medium transition-colors disabled:opacity-50"
-            >
-              <Save className="w-4 h-4" />
-              {saving ? 'Sauvegarde...' : 'Sauvegarder'}
+
+        {/* Actions row */}
+        <div className="flex items-center gap-3 mb-6">
+          {playlist.ownerId === user?.id && (
+            <button onClick={handleCreateCollabLink} className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 border border-white/10 hover:border-white/20 rounded-xl px-3 py-2 transition-colors">
+              <Link className="w-3.5 h-3.5" />
+              Lien coédition
             </button>
-          </div>
+          )}
         </div>
+
         {collabLink && (
           <div className="mb-6 rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-3 text-xs text-indigo-200 break-all">
-            {collabLink}
+            Lien copié : {collabLink}
           </div>
         )}
-        {collabToken && (
-          <div className="mb-6 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
-            Mode coédition temps réel actif. {collabEditorsCount} éditeur(s) connecté(s).
+        {activeCollabToken && (
+          <div className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
+            Coédition active · {collabEditorsCount} éditeur(s) connecté(s)
           </div>
         )}
+
+        <div className="mb-6 rounded-xl border border-white/10 bg-zinc-900/50 p-4 app-card">
+          <p className="text-xs uppercase tracking-wider text-zinc-500 mb-3">Préconfiguration des questions</p>
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+            <label className="text-xs text-zinc-400">
+              Type
+              <select
+                value={defaultQuestionType}
+                onChange={(e) => setDefaultQuestionType(e.target.value as MediaType)}
+                className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-white"
+              >
+                {MEDIA_TYPE_OPTIONS.map((opt) => (
+                  <option key={`panel-${opt.value}`} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs text-zinc-400">
+              Durée (s)
+              <input
+                type="number"
+                min={5}
+                max={300}
+                value={defaultDuration}
+                onChange={(e) => setDefaultDuration(parseInt(e.target.value, 10) || 30)}
+                className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-white"
+              />
+            </label>
+            <label className="text-xs text-zinc-400">
+              Révélation image
+              <select
+                value={defaultImageRevealMode}
+                onChange={(e) => setDefaultImageRevealMode(e.target.value as 'none' | 'blur')}
+                className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-white"
+                disabled={defaultQuestionType !== 'image'}
+              >
+                <option value="none">Immédiate</option>
+                <option value="blur">Progressive blur</option>
+              </select>
+            </label>
+            <label className="text-xs text-zinc-400">
+              Durée révélation
+              <input
+                type="number"
+                min={1}
+                max={300}
+                value={defaultImageRevealDuration}
+                onChange={(e) => setDefaultImageRevealDuration(parseInt(e.target.value, 10) || 15)}
+                className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-white"
+                disabled={defaultQuestionType !== 'image'}
+              />
+            </label>
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={applyDefaultsToAllTracks}
+                disabled={playlist.tracks.length === 0}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-lg px-3 py-2 text-sm"
+              >
+                Appliquer à toutes
+              </button>
+            </div>
+          </div>
+          <p className="text-[11px] text-zinc-500 mt-2">
+            Les nouvelles questions utilisent cette configuration automatiquement.
+          </p>
+        </div>
 
         {/* Pistes */}
         <div className="space-y-4 mb-6">
@@ -417,7 +522,10 @@ export default function EditPlaylist() {
             const dedupeKey = `${(track.title || '').trim().toLowerCase()}::${(track.artist || '').trim().toLowerCase()}`;
             const isDuplicate = duplicateKeys.has(dedupeKey) && dedupeKey !== "::";
             const mediaOption = MEDIA_TYPE_OPTIONS.find(o => o.value === track.mediaType);
+            // sourceUrl is used for text inputs — never shows a blob URL
             const sourceUrl = track.mediaUrl || track.url || '';
+            // previewSrc includes the local blob URL so the uploader sees a preview immediately
+            const previewSrc = localPreviewUrls[track.id] || sourceUrl;
 
             return (
               <div key={track.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 group app-card">
@@ -587,7 +695,7 @@ export default function EditPlaylist() {
                               Upload fichier audio
                             </button>
                           </div>
-                          {sourceUrl && (
+                          {previewSrc && (
                             <div className="space-y-2">
                               <button
                                 type="button"
@@ -599,7 +707,7 @@ export default function EditPlaylist() {
                               <audio
                                 id={`preview-media-${track.id}`}
                                 controls
-                                src={sourceUrl}
+                                src={previewSrc}
                                 className="w-full"
                                 onLoadedMetadata={(e) => {
                                   if ((track.startTime ?? 0) > 0) {
@@ -627,7 +735,8 @@ export default function EditPlaylist() {
                               value={sourceUrl}
                               onChange={(e) => updateTrack(track.id, { mediaUrl: e.target.value, url: e.target.value })}
                               className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
-                              placeholder="URL directe ou uploadez un fichier"
+                              placeholder={uploadProgress[track.id] !== undefined ? 'Envoi en cours…' : 'URL directe ou uploadez un fichier'}
+                              readOnly={uploadProgress[track.id] !== undefined}
                             />
                             <button
                               onClick={() => triggerFileInput(track.id, mediaOption?.accept || '*')}
@@ -643,7 +752,7 @@ export default function EditPlaylist() {
                             )}
                           </div>
 
-                          {track.mediaType === 'audio' && sourceUrl && (
+                          {track.mediaType === 'audio' && previewSrc && (
                             <div className="space-y-2">
                               <button
                                 type="button"
@@ -655,7 +764,7 @@ export default function EditPlaylist() {
                               <audio
                                 id={`preview-media-${track.id}`}
                                 controls
-                                src={sourceUrl}
+                                src={previewSrc}
                                 className="w-full"
                                 onLoadedMetadata={(e) => {
                                   if ((track.startTime ?? 0) > 0) {
@@ -665,7 +774,7 @@ export default function EditPlaylist() {
                               />
                             </div>
                           )}
-                          {track.mediaType === 'video' && sourceUrl && (
+                          {track.mediaType === 'video' && previewSrc && (
                             <div className="space-y-2">
                               <button
                                 type="button"
@@ -677,7 +786,7 @@ export default function EditPlaylist() {
                               <video
                                 id={`preview-media-${track.id}`}
                                 controls
-                                src={sourceUrl}
+                                src={previewSrc}
                                 className="w-full max-h-48 rounded-lg bg-black/30"
                                 onLoadedMetadata={(e) => {
                                   if ((track.startTime ?? 0) > 0) {
@@ -687,8 +796,48 @@ export default function EditPlaylist() {
                               />
                             </div>
                           )}
-                          {track.mediaType === 'image' && sourceUrl && (
-                            <img src={sourceUrl} alt="preview" className="max-h-48 rounded-lg" />
+                          {track.mediaType === 'image' && previewSrc && (
+                            <div className="space-y-3">
+                              <img
+                                src={previewSrc}
+                                alt="preview"
+                                className="max-h-48 rounded-lg"
+                                style={{
+                                  filter: track.imageRevealMode === 'blur' ? 'blur(8px)' : 'none',
+                                }}
+                              />
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                <select
+                                  value={track.imageRevealMode || 'none'}
+                                  onChange={(e) =>
+                                    updateTrack(track.id, { imageRevealMode: (e.target.value as 'none' | 'blur') || 'none' })
+                                  }
+                                  className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white text-sm"
+                                >
+                                  <option value="none">Révélation image: immédiate</option>
+                                  <option value="blur">Révélation progressive (blur)</option>
+                                </select>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={300}
+                                  value={track.imageRevealDuration || track.duration || defaultDuration}
+                                  onChange={(e) =>
+                                    updateTrack(track.id, { imageRevealDuration: Math.max(1, Math.min(300, Number(e.target.value) || 15)) })
+                                  }
+                                  className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white text-sm"
+                                  placeholder="Durée révélation (s)"
+                                  title="Durée de révélation de l'image (s)"
+                                />
+                                <input
+                                  type="text"
+                                  value={track.visualHint || ''}
+                                  onChange={(e) => updateTrack(track.id, { visualHint: e.target.value })}
+                                  className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white text-sm"
+                                  placeholder="Indice visuel (optionnel)"
+                                />
+                              </div>
+                            </div>
                           )}
                         </div>
                       )}
