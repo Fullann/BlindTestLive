@@ -386,7 +386,7 @@ export default function PublicScreen() {
                   <p className="text-xs uppercase tracking-[0.2em] text-zinc-300 text-center mb-1">Transition sponsor</p>
                   <p className="text-4xl font-black text-center">{roundTransitionLabel}</p>
                 </div>
-              </div>
+              </motion.div>
             </motion.div>
           )}
         </AnimatePresence>
