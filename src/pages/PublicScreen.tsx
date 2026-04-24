@@ -125,6 +125,7 @@ export default function PublicScreen() {
   const [branding, setBranding] = useState<{ client_name?: string; logo_url?: string; primary_color?: string; accent_color?: string } | null>(null);
   const hasFinishedRef = useRef(false);
   const prevTrackIndexRef = useRef<number | null>(null);
+  const roundTransitionTimeoutRef = useRef<number | null>(null);
   const [sponsorSlideIndex, setSponsorSlideIndex] = useState(0);
   const [showRoundTransition, setShowRoundTransition] = useState(false);
   const [roundTransitionLabel, setRoundTransitionLabel] = useState('');
@@ -205,12 +206,26 @@ export default function PublicScreen() {
     if (prevIdx !== null && currentIdx !== prevIdx) {
       setRoundTransitionLabel(`Manche ${currentIdx + 1}`);
       setShowRoundTransition(true);
-      const timer = window.setTimeout(() => setShowRoundTransition(false), 1400);
+      if (roundTransitionTimeoutRef.current) {
+        window.clearTimeout(roundTransitionTimeoutRef.current);
+      }
+      roundTransitionTimeoutRef.current = window.setTimeout(() => {
+        setShowRoundTransition(false);
+        roundTransitionTimeoutRef.current = null;
+      }, 1400);
       prevTrackIndexRef.current = currentIdx;
-      return () => window.clearTimeout(timer);
+      return;
     }
     prevTrackIndexRef.current = currentIdx;
   }, [gameState?.currentTrackIndex, gameState?.youtubeVideoId, gameState]);
+
+  useEffect(() => {
+    return () => {
+      if (roundTransitionTimeoutRef.current) {
+        window.clearTimeout(roundTransitionTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!gameState || gameState.status !== 'playing') return;
@@ -304,11 +319,20 @@ export default function PublicScreen() {
     'Merci à notre sponsor',
     `Palette: ${primaryColor} · ${accentColor}`,
   ];
+  const isPreGame = gameState.status === 'lobby' || gameState.status === 'onboarding' || gameState.status === 'countdown';
+  const qrSize = isPreGame ? 220 : 80;
   const ledHeadlineClass = 'font-black uppercase tracking-[0.06em] [text-shadow:0_0_16px_rgba(99,102,241,0.35)]';
   const visualizerBars = Array.from({ length: 16 }, (_, index) => {
     const wave = Math.sin((beatTick + index) / 1.6);
     return Math.max(18, Math.round(42 + wave * 36));
   });
+  const showSponsorOverlay = Boolean(branding?.client_name || branding?.logo_url) && (
+    gameState.status === 'lobby' ||
+    gameState.status === 'onboarding' ||
+    gameState.status === 'countdown' ||
+    gameState.status === 'revealed' ||
+    gameState.status === 'finished'
+  );
 
   return (
     <div className={`min-h-screen ${themeClass} flex flex-col overflow-hidden app-shell`}>
@@ -324,8 +348,8 @@ export default function PublicScreen() {
       {/* Top Bar */}
       <div className="bg-black/20 border-b border-white/10 p-6 flex items-center justify-between">
         <div className="flex items-center gap-6">
-            <div className="bg-white p-2 rounded-xl">
-              <QRCodeSVG value={joinUrl} size={80} />
+            <div className={`${isPreGame ? 'p-4 rounded-2xl' : 'p-2 rounded-xl'} bg-white shadow-2xl transition-all duration-300`}>
+              <QRCodeSVG value={joinUrl} size={qrSize} />
             </div>
           <div>
               <p className="text-zinc-400 text-lg uppercase tracking-widest font-semibold">{branding?.client_name ? `${branding.client_name} • ` : ''}Rejoignez la partie sur</p>
@@ -391,24 +415,26 @@ export default function PublicScreen() {
           )}
         </AnimatePresence>
 
-        <div className="absolute top-5 right-5 z-30 pointer-events-none">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={`sponsor-${sponsorSlideIndex}`}
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              transition={{ duration: 0.35 }}
-              className="min-w-[300px] bg-black/45 border border-white/10 rounded-xl px-4 py-3 backdrop-blur-md"
-            >
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-indigo-300" />
-                <p className="text-xs uppercase tracking-widest text-zinc-400">Sponsor live</p>
-              </div>
-              <p className="text-sm mt-1 text-zinc-100">{sponsorSlides[sponsorSlideIndex]}</p>
-            </motion.div>
-          </AnimatePresence>
-        </div>
+        {showSponsorOverlay && (
+          <div className="absolute top-5 right-5 z-30 pointer-events-none">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={`sponsor-${sponsorSlideIndex}`}
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+                transition={{ duration: 0.35 }}
+                className="min-w-[300px] bg-black/45 border border-white/10 rounded-xl px-4 py-3 backdrop-blur-md"
+              >
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-300" />
+                  <p className="text-xs uppercase tracking-widest text-zinc-400">Sponsor live</p>
+                </div>
+                <p className="text-sm mt-1 text-zinc-100">{sponsorSlides[sponsorSlideIndex]}</p>
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        )}
         
         {/* Left: Game Status / Track Info / Buzzer Animation */}
         <div className="flex-1 flex flex-col items-center justify-center p-12 relative z-10">

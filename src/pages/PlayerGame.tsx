@@ -629,7 +629,7 @@ export default function PlayerGame() {
           </motion.button>
         )}
 
-        {gameState.status !== 'finished' && (
+        {gameState.status !== 'finished' && textModeEnabled && (
           <div className="w-full bg-zinc-900/80 border border-white/10 rounded-2xl p-4">
             <p className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Question ouverte</p>
             <div className="flex gap-2">
@@ -646,17 +646,13 @@ export default function PlayerGame() {
                 disabled={
                   sendingTextAnswer ||
                   textAnswerDraft.trim().length === 0 ||
-                  !['playing', 'paused'].includes(gameState.status) ||
-                  !textModeEnabled
+                  !['playing', 'paused'].includes(gameState.status)
                 }
                 className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-lg px-3 py-2 text-xs font-medium"
               >
                 {sendingTextAnswer ? '...' : 'Envoyer'}
               </button>
             </div>
-            {!textModeEnabled && (
-              <p className="text-[11px] text-zinc-500 mt-2">L'animateur n'a pas activé la question ouverte pour cette manche.</p>
-            )}
           </div>
         )}
 
