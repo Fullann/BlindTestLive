@@ -279,20 +279,17 @@ export default function HostGame() {
         };
 
         pc.ontrack = (e) => {
-          const stream = e.streams[0];
+          const stream = e.streams[0] ?? e.track && new MediaStream([e.track]);
           if (!stream) return;
-          // Play audio
+          // Play audio — pour un MediaStream live, on appelle play() directement
+          // sans attendre readyState ou onloadedmetadata (peu fiable sur certains navigateurs)
           if (audioRef.current) {
             audioRef.current.srcObject = stream;
             audioRef.current.muted = false;
             audioRef.current.volume = 1;
-            const playMic = () => {
-              audioRef.current?.play().catch(() => {
-                toastError("Audio micro bloqué par le navigateur. Clique n'importe où puis réessaie.");
-              });
-            };
-            if (audioRef.current.readyState >= 1) playMic();
-            else audioRef.current.onloadedmetadata = playMic;
+            audioRef.current.play().catch(() => {
+              toastError("Audio micro bloqué par le navigateur. Clique n'importe où puis réessaie.");
+            });
           }
           // Volume analyser
           try {

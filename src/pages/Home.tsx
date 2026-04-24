@@ -143,6 +143,31 @@ export default function Home() {
     });
   };
 
+  useEffect(() => {
+    if (activeMode !== 'player' || playerStep !== 'details') return;
+    const code = normalizeCode(gameCode);
+    if (!code) return;
+
+    const refreshTeamConfig = () => {
+      socket.emit('game:check', code, (res: any) => {
+        if (!res?.success || res?.status === 'finished') return;
+        const teamMode = Boolean(res.isTeamMode);
+        const teams = Array.isArray(res.teamConfig) ? res.teamConfig.filter((t: any) => t?.enabled) : [];
+        setIsTeamMode(teamMode);
+        setAvailableTeams(teams);
+        setTeam((prev) => (teams.some((t: any) => t.id === prev) ? prev : ''));
+      });
+    };
+
+    // Mise à jour live des équipes avant que le joueur rejoigne la partie.
+    refreshTeamConfig();
+    const refreshId = window.setInterval(refreshTeamConfig, 1500);
+
+    return () => {
+      window.clearInterval(refreshId);
+    };
+  }, [activeMode, playerStep, gameCode]);
+
   const joinGameWithCurrentIdentity = (code: string, forcedTeam?: string, forcedName?: string) => {
     const trimmedName = (forcedName ?? playerName).trim();
     if (!trimmedName) { setError('Entre ton pseudo'); return; }
