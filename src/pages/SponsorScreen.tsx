@@ -58,8 +58,18 @@ export default function SponsorScreen() {
           <div>
             <p className="text-white/70 text-sm uppercase">Événement</p>
             <h1 className="text-4xl font-black">{branding?.client_name || 'BlindTest Live'}</h1>
+            <div className="flex items-center gap-3 mt-3">
+              <div className="inline-flex items-center gap-2 bg-white/10 border border-white/25 rounded-full px-3 py-1.5">
+                <span className="w-3 h-3 rounded-full border border-white/60" style={{ backgroundColor: primary }} />
+                <span className="text-xs text-white/90 font-mono">{primary}</span>
+              </div>
+              <div className="inline-flex items-center gap-2 bg-white/10 border border-white/25 rounded-full px-3 py-1.5">
+                <span className="w-3 h-3 rounded-full border border-white/60" style={{ backgroundColor: accent }} />
+                <span className="text-xs text-white/90 font-mono">{accent}</span>
+              </div>
+            </div>
           </div>
-          {branding?.logo_url && <img src={branding.logo_url} alt="logo" className="h-20 object-contain" />}
+          {branding?.logo_url && <img src={branding.logo_url} alt="logo" className="h-28 max-w-[320px] object-contain" />}
         </div>
         <div className="bg-black/30 border border-white/20 rounded-3xl p-8 backdrop-blur-sm">
           <p className="text-white/70 text-sm uppercase mb-2">Classement en direct</p>

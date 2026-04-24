@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
 import { socket } from '../lib/socket';
@@ -67,6 +68,7 @@ const MODES: Array<{
 export default function Home() {
   const { register } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [activeMode, setActiveMode] = useState<AccessMode | null>(null);
 
@@ -124,29 +126,28 @@ export default function Home() {
 
   useEffect(() => { setError(''); }, [activeMode, playerStep]);
 
-  const handleCheckGame = (e: React.FormEvent) => {
-    e.preventDefault();
-    const code = normalizeCode(gameCode);
-    if (!code) { setError('Entre un code de partie'); return; }
+  const checkGameCode = (code: string, onReady?: (teams: Array<{ id: string; name: string; color: string; enabled: boolean }>, teamMode: boolean) => void) => {
     setPlayerLoading(true);
     socket.emit('game:check', code, (res: any) => {
       setPlayerLoading(false);
       if (!res?.success) { setError(res?.error || 'Partie introuvable'); return; }
       if (res?.status === 'finished') { setError('Cette partie est terminée.'); return; }
-      setIsTeamMode(res.isTeamMode);
+      const teamMode = Boolean(res.isTeamMode);
       const teams = Array.isArray(res.teamConfig) ? res.teamConfig.filter((t: any) => t?.enabled) : [];
+      setIsTeamMode(teamMode);
       setAvailableTeams(teams);
       if (teams.length > 0 && !teams.some((t: any) => t.id === team)) setTeam('');
       setPlayerStep('details');
       setError('');
+      onReady?.(teams, teamMode);
     });
   };
 
-  const handleJoinGame = (e: React.FormEvent) => {
-    e.preventDefault();
-    const code = normalizeCode(gameCode);
-    if (!playerName.trim()) { setError('Entre ton pseudo'); return; }
-    if (isTeamMode && availableTeams.length > 0 && !team) { setError('Choisis une équipe'); return; }
+  const joinGameWithCurrentIdentity = (code: string, forcedTeam?: string, forcedName?: string) => {
+    const trimmedName = (forcedName ?? playerName).trim();
+    if (!trimmedName) { setError('Entre ton pseudo'); return; }
+    const effectiveTeam = forcedTeam ?? team;
+    if (isTeamMode && availableTeams.length > 0 && !effectiveTeam) { setError('Choisis une équipe'); return; }
     let playerId = localStorage.getItem('blindtest_player_id');
     let playerSecret = localStorage.getItem('blindtest_player_secret');
     if (!playerId || !playerSecret) {
@@ -154,16 +155,51 @@ export default function Home() {
       localStorage.setItem('blindtest_player_id', playerId);
       localStorage.setItem('blindtest_player_secret', playerSecret);
     }
-    localStorage.setItem('blindtest_player_name', playerName.trim());
-    if (isTeamMode && team) localStorage.setItem('blindtest_player_team', team);
+    localStorage.setItem('blindtest_player_name', trimmedName);
+    if (isTeamMode && effectiveTeam) localStorage.setItem('blindtest_player_team', effectiveTeam);
     else localStorage.removeItem('blindtest_player_team');
     setPlayerLoading(true);
-    socket.emit('player:joinGame', { gameId: code, playerId, playerSecret, name: playerName.trim(), team: isTeamMode && availableTeams.length > 0 ? team : undefined }, (res: any) => {
-      setPlayerLoading(false);
-      if (res?.success) { localStorage.setItem('blindtest_last_game_id', code); navigate(`/game/${code}`); }
-      else setError(res?.error || 'Connexion impossible');
-    });
+    socket.emit(
+      'player:joinGame',
+      { gameId: code, playerId, playerSecret, name: trimmedName, team: isTeamMode && availableTeams.length > 0 ? effectiveTeam : undefined },
+      (res: any) => {
+        setPlayerLoading(false);
+        if (res?.success) { localStorage.setItem('blindtest_last_game_id', code); navigate(`/game/${code}`); }
+        else setError(res?.error || 'Connexion impossible');
+      },
+    );
   };
+
+  const handleCheckGame = (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = normalizeCode(gameCode);
+    if (!code) { setError('Entre un code de partie'); return; }
+    checkGameCode(code);
+  };
+
+  const handleJoinGame = (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = normalizeCode(gameCode);
+    joinGameWithCurrentIdentity(code);
+  };
+
+  useEffect(() => {
+    const modeParam = searchParams.get('mode');
+    const gameParam = normalizeCode(searchParams.get('game') || '');
+    if (modeParam !== 'player' || !gameParam) return;
+    setActiveMode('player');
+    setGameCode(gameParam);
+    checkGameCode(gameParam, (teams, teamMode) => {
+      const savedName = (localStorage.getItem('blindtest_player_name') || '').trim();
+      if (!savedName) return;
+      const savedTeam = localStorage.getItem('blindtest_player_team') || '';
+      if (teamMode && teams.length > 0 && !teams.some((t) => t.id === savedTeam)) return;
+      setPlayerName(savedName);
+      if (savedTeam) setTeam(savedTeam);
+      joinGameWithCurrentIdentity(gameParam, savedTeam || undefined, savedName);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const handleAdminAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -419,6 +455,7 @@ export default function Home() {
                   {activeMode === 'host' && (
                     <form
                       onSubmit={adminNeedsTwoFactor ? handleAdminTwoFactor : handleAdminAuth}
+                      autoComplete="on"
                       className="space-y-4"
                     >
                       {!adminNeedsTwoFactor ? (
@@ -444,11 +481,14 @@ export default function Home() {
                               Adresse e-mail
                             </label>
                             <input
+                              id="admin-email"
+                              name="email"
                               type="email"
                               value={adminEmail}
                               onChange={(e) => setAdminEmail(e.target.value)}
                               className="w-full bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
                               placeholder="ton@email.com"
+                              autoComplete="username"
                               autoFocus
                             />
                           </div>
@@ -457,11 +497,14 @@ export default function Home() {
                               Mot de passe
                             </label>
                             <input
+                              id="admin-password"
+                              name="password"
                               type="password"
                               value={adminPassword}
                               onChange={(e) => setAdminPassword(e.target.value)}
                               className="w-full bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
                               placeholder="••••••••"
+                              autoComplete={adminMode === 'signup' ? 'new-password' : 'current-password'}
                             />
                           </div>
                         </>

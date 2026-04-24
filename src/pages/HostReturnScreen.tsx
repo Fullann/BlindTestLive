@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { socket } from '../lib/socket';
 import { GameState, Player } from '../types';
+import { api } from '../api';
 
 export default function HostReturnScreen() {
   const { gameId } = useParams<{ gameId: string }>();
   const [gameState, setGameState] = useState<GameState | null>(null);
+  const [branding, setBranding] = useState<{ client_name?: string; logo_url?: string; primary_color?: string; accent_color?: string } | null>(null);
 
   useEffect(() => {
     if (!gameId) return;
@@ -24,17 +26,58 @@ export default function HostReturnScreen() {
     };
   }, [gameId]);
 
+  useEffect(() => {
+    if (!gameId) return;
+    let active = true;
+    const loadBranding = async () => {
+      try {
+        const res = await api.events.getBrandingByGame(gameId);
+        if (active) setBranding(res.branding || null);
+      } catch {
+        if (active) setBranding(null);
+      }
+    };
+    void loadBranding();
+    return () => {
+      active = false;
+    };
+  }, [gameId]);
+
   if (!gameState) return <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">Chargement retour animateur...</div>;
 
   const players = (Object.values(gameState.players) as Player[]).sort((a, b) => b.score - a.score);
   const track = gameState.playlist?.[gameState.currentTrackIndex];
+  const primaryColor = branding?.primary_color || '#4f46e5';
+  const accentColor = branding?.accent_color || '#a855f7';
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white p-6 app-shell">
       <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 bg-zinc-900 border border-white/10 rounded-2xl p-5">
-          <p className="text-xs text-zinc-500 uppercase">Retour animateur</p>
-          <h1 className="text-2xl font-bold mt-1">Partie {gameState.id}</h1>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs text-zinc-500 uppercase">Retour animateur</p>
+              <h1 className="text-2xl font-bold mt-1">Partie {gameState.id}</h1>
+              {branding?.client_name && <p className="text-sm text-zinc-300 mt-1">{branding.client_name}</p>}
+              <div className="flex items-center gap-3 mt-3">
+                <div className="inline-flex items-center gap-2 bg-zinc-950 border border-white/10 rounded-full px-3 py-1.5">
+                  <span className="w-3 h-3 rounded-full border border-white/40" style={{ backgroundColor: primaryColor }} />
+                  <span className="text-xs text-zinc-200 font-mono">{primaryColor}</span>
+                </div>
+                <div className="inline-flex items-center gap-2 bg-zinc-950 border border-white/10 rounded-full px-3 py-1.5">
+                  <span className="w-3 h-3 rounded-full border border-white/40" style={{ backgroundColor: accentColor }} />
+                  <span className="text-xs text-zinc-200 font-mono">{accentColor}</span>
+                </div>
+              </div>
+            </div>
+            {branding?.logo_url && (
+              <img
+                src={branding.logo_url}
+                alt="logo client"
+                className="h-24 max-w-[260px] object-contain"
+              />
+            )}
+          </div>
           <p className="text-sm text-zinc-400 mt-1">Statut: {gameState.status}</p>
           {!gameState.youtubeVideoId && (
             <div className="mt-4 bg-zinc-950 border border-white/10 rounded-xl p-4">

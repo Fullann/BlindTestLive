@@ -11,6 +11,7 @@ export interface Track {
   id: string;
   title: string;
   artist: string;
+  answerImageUrl?: string; // Optional image displayed when revealing answer
   mediaType?: MediaType;
   mediaUrl?: string; // URL to the media file or YouTube ID
   textContent?: string; // If mediaType is 'text'

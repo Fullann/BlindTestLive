@@ -244,9 +244,11 @@ export default function PublicScreen() {
     return <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center text-2xl">En attente de la partie...</div>;
   }
 
-  const joinUrl = `${window.location.origin}/game/${gameId}`;
+  const joinUrl = `${window.location.origin}/?mode=player&game=${encodeURIComponent(gameId || '')}`;
   const buzzedPlayer = gameState.buzzedPlayerId ? gameState.players[gameState.buzzedPlayerId] : null;
   const isYoutubeMode = !!gameState.youtubeVideoId;
+  const primaryColor = branding?.primary_color || '#4f46e5';
+  const accentColor = branding?.accent_color || '#a855f7';
   const currentTrack = !isYoutubeMode ? gameState.playlist[gameState.currentTrackIndex] : null;
   const trackDuration = currentTrack?.duration || gameState.defaultTrackDuration || 20;
   const progressPct = !isYoutubeMode && gameState.playlist.length > 0
@@ -318,16 +320,26 @@ export default function PublicScreen() {
               <p className="text-zinc-400">Code :</p>
               <span
                 className="text-white px-4 py-1 rounded-lg text-3xl font-mono font-bold tracking-widest"
-                style={{ backgroundColor: branding?.primary_color || '#4f46e5' }}
+                style={{ backgroundColor: primaryColor }}
               >
                 {gameState.id}
               </span>
+            </div>
+            <div className="flex items-center gap-3 mt-3">
+              <div className="inline-flex items-center gap-2 bg-black/25 border border-white/10 rounded-full px-3 py-1.5">
+                <span className="w-3 h-3 rounded-full border border-white/40" style={{ backgroundColor: primaryColor }} />
+                <span className="text-xs text-zinc-200 font-mono">{primaryColor}</span>
+              </div>
+              <div className="inline-flex items-center gap-2 bg-black/25 border border-white/10 rounded-full px-3 py-1.5">
+                <span className="w-3 h-3 rounded-full border border-white/40" style={{ backgroundColor: accentColor }} />
+                <span className="text-xs text-zinc-200 font-mono">{accentColor}</span>
+              </div>
             </div>
           </div>
         </div>
         
         <div className="text-right">
-          {branding?.logo_url && <img src={branding.logo_url} alt="logo client" className="h-12 ml-auto mb-2 object-contain" />}
+          {branding?.logo_url && <img src={branding.logo_url} alt="logo client" className="h-24 max-w-[260px] ml-auto mb-2 object-contain" />}
           <p className="text-zinc-500 text-xl font-medium uppercase tracking-widest mb-2">
             {isYoutubeMode ? `Manche ${gameState.roundNumber || 1}` : `Piste ${gameState.currentTrackIndex + 1} / ${gameState.playlist.length}`}
           </p>
@@ -540,6 +552,15 @@ export default function PublicScreen() {
                 ) : (
                   <>
                     <h2 className="text-3xl text-zinc-400 uppercase tracking-widest font-semibold mb-8">La réponse était</h2>
+                    {currentTrack?.answerImageUrl && (
+                      <div className="mb-8 rounded-2xl overflow-hidden shadow-2xl border-4 border-emerald-500/30">
+                        <img
+                          src={currentTrack.answerImageUrl}
+                          alt="Illustration de la réponse"
+                          className="w-full h-auto max-h-[44vh] object-contain bg-black/40"
+                        />
+                      </div>
+                    )}
                     <h1 className="text-7xl font-bold mb-6">{currentTrack?.title}</h1>
                     <p className="text-5xl text-indigo-400">{currentTrack?.artist}</p>
                   </>

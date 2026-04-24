@@ -43,6 +43,7 @@ export default function EditPlaylist() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
   const [activeAccept, setActiveAccept] = useState<string>('*');
+  const [activeUploadTarget, setActiveUploadTarget] = useState<'media' | 'answer'>('media');
   const [defaultDuration, setDefaultDuration] = useState<number>(30);
   const [defaultQuestionType, setDefaultQuestionType] = useState<MediaType>('audio');
   const [defaultImageRevealMode, setDefaultImageRevealMode] = useState<'none' | 'blur'>('none');
@@ -286,49 +287,56 @@ export default function EditPlaylist() {
     setPlaylist({ ...playlist, tracks: nextTracks });
   };
 
-  const uploadFile = async (file: File, trackId: string) => {
+  const uploadFile = async (file: File, trackId: string, target: 'media' | 'answer' = 'media') => {
     if (!playlistId || !user) {
       toastWarning("Vous devez être connecté pour uploader un fichier.");
       return;
     }
+    const previewKey = `${trackId}:${target}`;
+    const progressKey = `${trackId}:${target}`;
 
     try {
       const previewUrl = URL.createObjectURL(file);
       // Store blob URL locally ONLY — never push it into the shared track state
       // so co-editors never receive a blob: URL they can't access.
       setLocalPreviewUrls((prev) => {
-        if (prev[trackId]) URL.revokeObjectURL(prev[trackId]);
-        return { ...prev, [trackId]: previewUrl };
+        if (prev[previewKey]) URL.revokeObjectURL(prev[previewKey]);
+        return { ...prev, [previewKey]: previewUrl };
       });
 
-      setUploadProgress(prev => ({ ...prev, [trackId]: 10 }));
+      setUploadProgress(prev => ({ ...prev, [progressKey]: 10 }));
       const { url } = await api.playlists.upload(playlistId, file);
-      setUploadProgress(prev => ({ ...prev, [trackId]: 100 }));
+      setUploadProgress(prev => ({ ...prev, [progressKey]: 100 }));
       // Only now update the shared track state with the real server URL
-      updateTrack(trackId, { mediaUrl: url, url });
+      if (target === 'answer') {
+        updateTrack(trackId, { answerImageUrl: url });
+      } else {
+        updateTrack(trackId, { mediaUrl: url, url });
+      }
       setLocalPreviewUrls((prev) => {
-        if (prev[trackId]) URL.revokeObjectURL(prev[trackId]);
+        if (prev[previewKey]) URL.revokeObjectURL(prev[previewKey]);
         const copy = { ...prev };
-        delete copy[trackId];
+        delete copy[previewKey];
         return copy;
       });
-      setTimeout(() => setUploadProgress(prev => { const n = { ...prev }; delete n[trackId]; return n; }), 1500);
+      setTimeout(() => setUploadProgress(prev => { const n = { ...prev }; delete n[progressKey]; return n; }), 1500);
     } catch (error) {
       console.error("Upload error:", error);
       toastError("Erreur lors de l'upload du fichier.");
-      setUploadProgress(prev => { const n = { ...prev }; delete n[trackId]; return n; });
+      setUploadProgress(prev => { const n = { ...prev }; delete n[progressKey]; return n; });
     }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && activeTrackId) void uploadFile(file, activeTrackId);
+    if (file && activeTrackId) void uploadFile(file, activeTrackId, activeUploadTarget);
     e.target.value = '';
   };
 
-  const triggerFileInput = (trackId: string, accept: string) => {
+  const triggerFileInput = (trackId: string, accept: string, target: 'media' | 'answer' = 'media') => {
     setActiveTrackId(trackId);
     setActiveAccept(accept);
+    setActiveUploadTarget(target);
     if (fileInputRef.current) {
       fileInputRef.current.accept = accept;
       fileInputRef.current.click();
@@ -526,7 +534,8 @@ export default function EditPlaylist() {
             // sourceUrl is used for text inputs — never shows a blob URL
             const sourceUrl = track.mediaUrl || track.url || '';
             // previewSrc includes the local blob URL so the uploader sees a preview immediately
-            const previewSrc = localPreviewUrls[track.id] || sourceUrl;
+            const previewSrc = localPreviewUrls[`${track.id}:media`] || sourceUrl;
+            const answerPreviewSrc = localPreviewUrls[`${track.id}:answer`] || (track.answerImageUrl || '');
 
             return (
               <div key={track.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 group app-card">
@@ -559,6 +568,40 @@ export default function EditPlaylist() {
                           placeholder="Ex: Édith Piaf, John Williams, ..."
                         />
                       </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-xs font-medium text-zinc-400">
+                        Image de réponse (grand écran, optionnelle)
+                      </label>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="text"
+                          value={track.answerImageUrl || ''}
+                          onChange={(e) => updateTrack(track.id, { answerImageUrl: e.target.value })}
+                          className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                          placeholder="URL image de la réponse (optionnel)"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => triggerFileInput(track.id, 'image/*', 'answer')}
+                          className="flex items-center gap-2 bg-zinc-700 hover:bg-zinc-600 px-3 py-2 rounded-lg transition-colors text-sm whitespace-nowrap"
+                        >
+                          <Upload className="w-4 h-4" />
+                          Upload réponse
+                        </button>
+                        {uploadProgress[`${track.id}:answer`] !== undefined && (
+                          <span className="text-xs text-indigo-400">
+                            {uploadProgress[`${track.id}:answer`] === 100 ? 'Terminé!' : `${uploadProgress[`${track.id}:answer`]}%`}
+                          </span>
+                        )}
+                      </div>
+                      {answerPreviewSrc && (
+                        <img
+                          src={answerPreviewSrc}
+                          alt="Réponse"
+                          className="max-h-32 rounded-lg border border-zinc-700"
+                        />
+                      )}
                     </div>
 
                     {/* Type de média + Durée */}
@@ -736,8 +779,8 @@ export default function EditPlaylist() {
                               value={sourceUrl}
                               onChange={(e) => updateTrack(track.id, { mediaUrl: e.target.value, url: e.target.value })}
                               className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
-                              placeholder={uploadProgress[track.id] !== undefined ? 'Envoi en cours…' : 'URL directe ou uploadez un fichier'}
-                              readOnly={uploadProgress[track.id] !== undefined}
+                              placeholder={uploadProgress[`${track.id}:media`] !== undefined ? 'Envoi en cours…' : 'URL directe ou uploadez un fichier'}
+                              readOnly={uploadProgress[`${track.id}:media`] !== undefined}
                             />
                             <button
                               onClick={() => triggerFileInput(track.id, mediaOption?.accept || '*')}
@@ -746,9 +789,9 @@ export default function EditPlaylist() {
                               <Upload className="w-4 h-4" />
                               Upload
                             </button>
-                            {uploadProgress[track.id] !== undefined && (
+                            {uploadProgress[`${track.id}:media`] !== undefined && (
                               <span className="text-xs text-indigo-400">
-                                {uploadProgress[track.id] === 100 ? 'Terminé!' : `${uploadProgress[track.id]}%`}
+                                {uploadProgress[`${track.id}:media`] === 100 ? 'Terminé!' : `${uploadProgress[`${track.id}:media`]}%`}
                               </span>
                             )}
                           </div>

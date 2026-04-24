@@ -101,11 +101,23 @@ export default function Playlists() {
     setLoading(true);
     try {
       const res = await api.playlists.list();
+      const getTrackCount = (value: unknown) => {
+        if (Array.isArray(value)) return value.length;
+        if (typeof value === 'string') {
+          try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed.length : 0;
+          } catch {
+            return 0;
+          }
+        }
+        return 0;
+      };
       setPlaylists(
         (res.playlists || []).map((p: any) => ({
           id: p.id,
           name: p.name,
-          trackCount: p.trackCount ?? (p.tracks?.length ?? 0),
+          trackCount: p.trackCount ?? getTrackCount(p.tracks),
           visibility: p.visibility || 'private',
           category: p.category,
         }))
