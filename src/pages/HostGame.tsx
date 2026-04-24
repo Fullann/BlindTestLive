@@ -181,13 +181,19 @@ export default function HostGame() {
   const [micVolume, setMicVolume] = useState(0);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const hostTrackAudioRef = useRef<HTMLAudioElement | null>(null);
+  const hostAudioFadeRef = useRef<number | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number>(0);
+  const [hostAudioEnabled, setHostAudioEnabled] = useState(true);
+  const [hostAudioVolume, setHostAudioVolume] = useState(0.9);
+  const [hostPrelisten, setHostPrelisten] = useState(false);
   const [draftMode, setDraftMode] = useState(false);
   const [draftUpcomingTracks, setDraftUpcomingTracks] = useState<
     Array<{ title: string; artist: string; duration: string; mediaType: string; mediaUrl: string; textContent: string; startTime: string; url: string }>
   >([]);
   const hostTokenFromUrl = searchParams.get('cohost');
+  const isSafeMode = searchParams.get('safe') === '1';
   const hostToken = gameId
     ? hostTokenFromUrl ||
       sessionStorage.getItem(`blindtest_host_${gameId}`) ||
@@ -389,7 +395,90 @@ export default function HostGame() {
   const hasQuizStarted = gameState.status !== 'lobby';
   const currentTrack = !isYoutubeMode ? gameState.playlist[gameState.currentTrackIndex] : null;
   const isYoutubeTrack = !!currentTrack && currentTrack.mediaType === 'youtube' && !!currentTrack.mediaUrl;
+  const canHostPlayTrackAudio =
+    !!currentTrack?.mediaUrl &&
+    (
+      !currentTrack?.mediaType ||
+      currentTrack.mediaType === 'audio' ||
+      currentTrack.mediaType === 'voice' ||
+      currentTrack.mediaType === 'video' ||
+      currentTrack.mediaType === 'url'
+    );
   const buzzedPlayer = gameState.buzzedPlayerId ? gameState.players[gameState.buzzedPlayerId] : null;
+  const normalizedTrackGain = currentTrack?.mediaType === 'video' ? 0.85 : 1;
+
+  const fadeHostAudioTo = useCallback((target: number, durationMs = 220) => {
+    const media = hostTrackAudioRef.current;
+    if (!media) return;
+    if (hostAudioFadeRef.current) {
+      window.clearInterval(hostAudioFadeRef.current);
+      hostAudioFadeRef.current = null;
+    }
+    const start = media.volume;
+    const delta = target - start;
+    if (Math.abs(delta) < 0.01 || durationMs <= 0) {
+      media.volume = Math.max(0, Math.min(1, target));
+      return;
+    }
+    const steps = Math.max(1, Math.round(durationMs / 30));
+    let currentStep = 0;
+    hostAudioFadeRef.current = window.setInterval(() => {
+      currentStep += 1;
+      const next = start + (delta * currentStep) / steps;
+      media.volume = Math.max(0, Math.min(1, next));
+      if (currentStep >= steps && hostAudioFadeRef.current) {
+        window.clearInterval(hostAudioFadeRef.current);
+        hostAudioFadeRef.current = null;
+      }
+    }, 30);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (hostAudioFadeRef.current) {
+        window.clearInterval(hostAudioFadeRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const media = hostTrackAudioRef.current;
+    if (!media) return;
+    const shouldPlay = canHostPlayTrackAudio && (gameState.status === 'playing' || hostPrelisten);
+    if (!shouldPlay || !hostAudioEnabled) {
+      fadeHostAudioTo(0);
+      window.setTimeout(() => media.pause(), 230);
+      return;
+    }
+    const nextSrc = currentTrack?.mediaUrl || '';
+    if (!nextSrc) {
+      media.pause();
+      return;
+    }
+    if (media.src !== nextSrc) {
+      media.src = nextSrc;
+    }
+    media.volume = Math.max(0, Math.min(1, hostAudioVolume * normalizedTrackGain));
+    try {
+      media.currentTime = Math.max(0, currentTrack?.startTime ?? 0);
+    } catch {
+      // Metadata may not be loaded yet.
+    }
+    media.play().then(() => {
+      fadeHostAudioTo(Math.max(0, Math.min(1, hostAudioVolume * normalizedTrackGain)));
+    }).catch(() => {});
+  }, [
+    canHostPlayTrackAudio,
+    currentTrack?.id,
+    currentTrack?.mediaUrl,
+    currentTrack?.startTime,
+    gameState.status,
+    hostAudioEnabled,
+    hostAudioVolume,
+    hostPrelisten,
+    normalizedTrackGain,
+    fadeHostAudioTo,
+  ]);
 
   const handleStartTrack = () => {
     if (isYoutubeMode) {
@@ -426,6 +515,7 @@ export default function HostGame() {
   };
 
   const handleKickPlayer = (playerId: string) => {
+    if (!window.confirm('Exclure ce joueur de la partie ?')) return;
     socket.emit('host:kickPlayer', { gameId, playerId, hostToken }, () => {});
     setPlayerToKick(null);
   };
@@ -693,6 +783,7 @@ export default function HostGame() {
   };
 
   const handleDeleteTrack = (index: number) => {
+    if (!window.confirm('Supprimer cette question de la file ?')) return;
     socket.emit('host:deleteTrack', { gameId, hostToken, index }, (res: any) => {
       if (!res?.success) {
         toastError(res?.error || 'Impossible de supprimer cette question.');
@@ -969,6 +1060,11 @@ export default function HostGame() {
             >
               Retour animateur
             </a>
+            {isSafeMode && (
+              <span className="hidden md:inline-flex items-center gap-1.5 bg-emerald-600/20 border border-emerald-500/30 text-emerald-300 px-3 py-1.5 rounded-lg text-xs font-medium">
+                Safe mode
+              </span>
+            )}
             {gameState.status === 'finished' && (
               <>
                 <button
@@ -987,7 +1083,7 @@ export default function HostGame() {
                 </button>
               </>
             )}
-            {gameState.status !== 'finished' && hostRole === 'owner' && (
+            {gameState.status !== 'finished' && hostRole === 'owner' && !isSafeMode && (
               <div className="relative">
                 {showEndConfirm ? (
                   <div className="absolute top-full right-0 mt-2 bg-zinc-800 p-4 rounded-xl border border-white/10 shadow-xl z-50 w-52">
@@ -1145,6 +1241,55 @@ export default function HostGame() {
                   </>
                 )}
               </div>
+              {!isYoutubeMode && canHostPlayTrackAudio && (
+                <audio
+                  ref={hostTrackAudioRef}
+                  src={currentTrack?.mediaUrl}
+                  preload="metadata"
+                  className="hidden"
+                  onLoadedMetadata={(e) => {
+                    const targetTime = Math.max(0, currentTrack?.startTime ?? 0);
+                    if (targetTime > 0) {
+                      try {
+                        e.currentTarget.currentTime = targetTime;
+                      } catch {
+                        // Ignore seek errors before metadata is fully ready.
+                      }
+                    }
+                  }}
+                />
+              )}
+              {!isYoutubeMode && (
+                <div className="mb-3 flex flex-wrap items-center gap-3 bg-zinc-950 border border-white/10 rounded-xl px-3 py-2">
+                  <label className="flex items-center gap-2 text-xs text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={hostAudioEnabled}
+                      onChange={(e) => setHostAudioEnabled(e.target.checked)}
+                    />
+                    Son admin
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={hostPrelisten}
+                      onChange={(e) => setHostPrelisten(e.target.checked)}
+                    />
+                    Pré-écoute casque
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-zinc-400">
+                    Volume
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={Math.round(hostAudioVolume * 100)}
+                      onChange={(e) => setHostAudioVolume(Math.max(0, Math.min(1, Number(e.target.value) / 100)))}
+                    />
+                    <span className="w-9 text-right text-zinc-300">{Math.round(hostAudioVolume * 100)}%</span>
+                  </label>
+                </div>
+              )}
               {/* Controls */}
               <div className="flex items-center gap-3">
                 {gameState.status === 'lobby' || gameState.status === 'revealed' ? (
@@ -1203,7 +1348,7 @@ export default function HostGame() {
           )}
 
           {/* Text Answers */}
-          <div className="bg-zinc-900 rounded-2xl border border-white/5 p-6">
+          {!isSafeMode && <div className="bg-zinc-900 rounded-2xl border border-white/5 p-6">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-base font-semibold flex items-center gap-2">
                 <FileText className="w-4 h-4 text-indigo-400" />
@@ -1246,10 +1391,10 @@ export default function HostGame() {
                 ))
               )}
             </div>
-          </div>
+          </div>}
 
           {/* Queue */}
-          {!isYoutubeMode && hasQuizStarted && (
+          {!isSafeMode && !isYoutubeMode && hasQuizStarted && (
             <div className="bg-zinc-900 rounded-2xl border border-white/5 p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-base font-semibold flex items-center gap-2">
@@ -1432,7 +1577,7 @@ export default function HostGame() {
                     </div>
                   ))}
                 </div>
-                {hostRole === 'owner' && (
+                {hostRole === 'owner' && !isSafeMode && (
                   <div className="flex flex-col gap-2">
                     <select
                       value={selectedRoundPlaylistId}
@@ -1686,7 +1831,7 @@ export default function HostGame() {
                         {gameState.isTeamMode && player.team && (
                           <p className="text-xs text-zinc-500">Équipe {getTeamName(player.team)}</p>
                         )}
-                        {gameState.isTeamMode && hostRole === 'owner' && (
+                        {gameState.isTeamMode && hostRole === 'owner' && !isSafeMode && (
                           <select
                             value={player.team || ''}
                             onChange={(e) => handleAssignPlayerTeam(player.id, e.target.value)}
@@ -1698,7 +1843,7 @@ export default function HostGame() {
                             ))}
                           </select>
                         )}
-                        {hostRole === 'owner' && (
+                        {hostRole === 'owner' && !isSafeMode && (
                           <div className="mt-1 flex items-center gap-1">
                             <button onClick={() => handleApplyEventPower('x2', player.id)} className="text-[9px] bg-zinc-800 hover:bg-zinc-700 px-1.5 py-0.5 rounded">x2</button>
                             <button onClick={() => handleApplyEventPower('freeze', player.id)} className="text-[9px] bg-zinc-800 hover:bg-zinc-700 px-1.5 py-0.5 rounded">Freeze</button>
@@ -1717,7 +1862,7 @@ export default function HostGame() {
                     </div>
                     <div className="flex items-center gap-2 shrink-0 ml-2">
                       <span className="font-mono font-bold text-sm">{player.score}</span>
-                      {hostRole === 'owner' && (
+                      {hostRole === 'owner' && !isSafeMode && (
                         <div className="relative">
                           {playerToKick === player.id ? (
                             <div className="absolute right-0 top-full mt-1 bg-zinc-800 p-3 rounded-xl border border-white/10 shadow-xl z-50 w-40">

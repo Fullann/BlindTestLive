@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../context/ToastContext';
 import { socket } from '../lib/socket';
+import { QRCodeSVG } from 'qrcode.react';
 import { BlindTestSession, Playlist, Track, MediaType } from '../types';
 import { Plus, Trash2, Play, Music, LogOut, Youtube, Edit, Flag, Upload, Mic, Film, Image as ImageIcon, Type, Link, Settings2, Cpu, BookOpen, Trophy, LayoutDashboard, Rocket, Activity, Moon, Sun } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
@@ -151,6 +152,17 @@ export default function AdminDashboard() {
   const [wizardPreviewTrackId, setWizardPreviewTrackId] = useState<string | null>(null);
   const [blindTestsTab, setBlindTestsTab] = useState<'active' | 'finished'>('active');
   const [showLaunchModal, setShowLaunchModal] = useState(false);
+  const [showEventQuickModal, setShowEventQuickModal] = useState(false);
+  const [eventQuickStep, setEventQuickStep] = useState<1 | 2 | 3>(1);
+  const [eventQuickPlaylistId, setEventQuickPlaylistId] = useState('');
+  const [eventQuickBusy, setEventQuickBusy] = useState(false);
+  const [eventQuickBranding, setEventQuickBranding] = useState({
+    clientName: '',
+    logoUrl: '',
+    primaryColor: '#6366f1',
+    accentColor: '#a855f7',
+  });
+  const [eventQuickCreated, setEventQuickCreated] = useState<{ gameId: string; joinUrl: string; screenUrl: string } | null>(null);
   const [adminTab, setAdminTab] = useState<'sessions' | 'lancer' | 'stats' | 'business'>('sessions');
   const [pendingPlaylistLaunch, setPendingPlaylistLaunch] = useState<Playlist | null>(null);
   const [pendingYoutubeLaunch, setPendingYoutubeLaunch] = useState<{ videoId: string; sourceUrl: string } | null>(null);
@@ -536,6 +548,7 @@ export default function AdminDashboard() {
   };
 
   const handleDeletePlaylist = async (id: string) => {
+    if (!window.confirm('Supprimer cette playlist ? Cette action est définitive.')) return;
     try {
       await api.playlists.delete(id);
       setPlaylists((prev) => prev.filter((p) => p.id !== id));
@@ -544,12 +557,22 @@ export default function AdminDashboard() {
     }
   };
 
-  const launchPlaylistGame = (playlist: Playlist) => {
-    if (launchOptions.isTeamMode && launchOptions.teamConfig.filter((team) => team.enabled).length === 0) {
+  const launchPlaylistGame = (
+    playlist: Playlist,
+    params?: {
+      overrideOptions?: typeof launchOptions;
+      safeMode?: boolean;
+      autoNavigate?: boolean;
+      onCreated?: (gameId: string) => Promise<void> | void;
+      onFailed?: () => void;
+    },
+  ) => {
+    const effectiveOptions = params?.overrideOptions || launchOptions;
+    if (effectiveOptions.isTeamMode && effectiveOptions.teamConfig.filter((team) => team.enabled).length === 0) {
       toastWarning('Activez au moins une équipe avant de lancer la partie.');
       return;
     }
-    socket.emit('host:createGame', playlist.tracks, launchOptions, async (response: any) => {
+    socket.emit('host:createGame', playlist.tracks, effectiveOptions, async (response: any) => {
       if (response.success) {
         sessionStorage.setItem(`blindtest_host_${response.gameId}`, response.hostToken);
         if (user) {
@@ -564,8 +587,14 @@ export default function AdminDashboard() {
             playlistId: playlist.id,
           });
         }
-        navigate(`/admin/game/${response.gameId}`);
+        if (params?.onCreated) {
+          await params.onCreated(response.gameId);
+        }
+        if (params?.autoNavigate !== false) {
+          navigate(`/admin/game/${response.gameId}${params?.safeMode ? '?safe=1' : ''}`);
+        }
       } else {
+        params?.onFailed?.();
         toastError(response.error || 'Erreur lors de la création de la partie');
       }
     });
@@ -690,6 +719,78 @@ export default function AdminDashboard() {
     setShowLaunchModal(false);
     setPendingPlaylistLaunch(null);
     setPendingYoutubeLaunch(null);
+  };
+
+  const openEventQuickModal = () => {
+    const firstPlaylist = playlists[0];
+    setEventQuickPlaylistId(firstPlaylist?.id || '');
+    setEventQuickStep(1);
+    setEventQuickBusy(false);
+    setEventQuickCreated(null);
+    setEventQuickBranding({
+      clientName: '',
+      logoUrl: '',
+      primaryColor: '#6366f1',
+      accentColor: '#a855f7',
+    });
+    setShowEventQuickModal(true);
+  };
+
+  const saveBrandingForGame = async (gameId: string, branding: { clientName: string; logoUrl: string; primaryColor: string; accentColor: string }) => {
+    try {
+      const { blindtests } = await api.blindtests.list();
+      const session = (blindtests || []).find((row: any) => row.game_id === gameId || row.gameId === gameId);
+      if (!session?.id) return;
+      await api.events.saveBranding(session.id, branding);
+    } catch (error) {
+      console.warn('Branding non appliqué automatiquement:', error);
+    }
+  };
+
+  const handlePrepareEventQuick = async () => {
+    const selected = playlists.find((p) => p.id === eventQuickPlaylistId);
+    if (!selected) {
+      toastWarning('Choisissez une playlist pour continuer.');
+      return;
+    }
+    setEventQuickBusy(true);
+    const fastOptions = {
+      ...launchOptions,
+      isTeamMode: false,
+      shuffleQuestions: false,
+      difficulty: 'medium' as const,
+      theme: 'dark' as const,
+      enableBonuses: false,
+      onboardingEnabled: true,
+      tutorialSeconds: 10,
+      tournamentMode: false,
+      strictTimerEnabled: false,
+      rules: {
+        ...launchOptions.rules,
+        wrongAnswerPenalty: -1,
+        antiSpamPenalty: -1,
+        progressiveLock: true,
+        progressiveLockBaseMs: 5000,
+      },
+    };
+    launchPlaylistGame(selected, {
+      overrideOptions: fastOptions,
+      safeMode: true,
+      autoNavigate: false,
+      onCreated: async (gameId) => {
+        await saveBrandingForGame(gameId, eventQuickBranding);
+        setEventQuickCreated({
+          gameId,
+          joinUrl: `${window.location.origin}/?mode=player&game=${encodeURIComponent(gameId)}`,
+          screenUrl: `${window.location.origin}/screen/${encodeURIComponent(gameId)}`,
+        });
+        setEventQuickStep(3);
+        setEventQuickBusy(false);
+      },
+      onFailed: () => {
+        setEventQuickBusy(false);
+      },
+    });
   };
 
   if (loading) {
@@ -884,6 +985,21 @@ export default function AdminDashboard() {
         {/* LANCER */}
         {adminTab === 'lancer' && (
           <div className="space-y-8">
+            <div className="bg-indigo-600/10 border border-indigo-500/30 rounded-2xl p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-wider text-indigo-300 font-semibold">Mode événement</p>
+                <h2 className="text-lg font-bold mt-1">Lancer événement (1 clic)</h2>
+                <p className="text-sm text-indigo-100/80 mt-1">Flux court: playlist → branding → QR live → console animateur en safe mode.</p>
+              </div>
+              <button
+                onClick={openEventQuickModal}
+                className="inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors"
+              >
+                <Rocket className="w-4 h-4" />
+                Lancer événement
+              </button>
+            </div>
+
             <div className="bg-zinc-900 border border-white/8 rounded-2xl p-6">
               <div className="flex items-center justify-between mb-2">
                 <div>
@@ -1133,6 +1249,113 @@ export default function AdminDashboard() {
                         <span className="text-indigo-300 text-xs font-mono">{entry.score} pts</span>
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* EVENT QUICK MODAL */}
+        {showEventQuickModal && (
+          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl bg-zinc-900 border border-white/10 rounded-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xl font-semibold">Mode événement — lancement guidé</h3>
+                <span className="text-xs text-zinc-500">Étape {eventQuickStep}/3</span>
+              </div>
+              {eventQuickStep === 1 && (
+                <div className="space-y-4">
+                  <p className="text-sm text-zinc-400">Choisis la playlist à lancer.</p>
+                  <select
+                    value={eventQuickPlaylistId}
+                    onChange={(e) => setEventQuickPlaylistId(e.target.value)}
+                    className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm"
+                  >
+                    <option value="">Sélectionner une playlist</option>
+                    {playlists.map((playlist) => (
+                      <option key={playlist.id} value={playlist.id}>
+                        {playlist.name} ({playlist.tracks.length} pistes)
+                      </option>
+                    ))}
+                  </select>
+                  <div className="flex justify-end gap-3">
+                    <button onClick={() => setShowEventQuickModal(false)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm">Annuler</button>
+                    <button
+                      onClick={() => setEventQuickStep(2)}
+                      disabled={!eventQuickPlaylistId}
+                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 px-5 py-2 rounded-xl text-sm font-semibold"
+                    >
+                      Continuer
+                    </button>
+                  </div>
+                </div>
+              )}
+              {eventQuickStep === 2 && (
+                <div className="space-y-4">
+                  <p className="text-sm text-zinc-400">Configure le branding à appliquer automatiquement.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <input
+                      type="text"
+                      value={eventQuickBranding.clientName}
+                      onChange={(e) => setEventQuickBranding((prev) => ({ ...prev, clientName: e.target.value }))}
+                      placeholder="Nom client / événement"
+                      className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm"
+                    />
+                    <input
+                      type="text"
+                      value={eventQuickBranding.logoUrl}
+                      onChange={(e) => setEventQuickBranding((prev) => ({ ...prev, logoUrl: e.target.value }))}
+                      placeholder="URL logo (optionnel)"
+                      className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm"
+                    />
+                    <label className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm flex items-center justify-between">
+                      Couleur primaire
+                      <input
+                        type="color"
+                        value={eventQuickBranding.primaryColor}
+                        onChange={(e) => setEventQuickBranding((prev) => ({ ...prev, primaryColor: e.target.value }))}
+                      />
+                    </label>
+                    <label className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm flex items-center justify-between">
+                      Couleur accent
+                      <input
+                        type="color"
+                        value={eventQuickBranding.accentColor}
+                        onChange={(e) => setEventQuickBranding((prev) => ({ ...prev, accentColor: e.target.value }))}
+                      />
+                    </label>
+                  </div>
+                  <div className="flex justify-end gap-3">
+                    <button onClick={() => setEventQuickStep(1)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm">Retour</button>
+                    <button
+                      onClick={() => void handlePrepareEventQuick()}
+                      disabled={eventQuickBusy}
+                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 px-5 py-2 rounded-xl text-sm font-semibold"
+                    >
+                      {eventQuickBusy ? 'Préparation…' : 'Préparer QR live'}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {eventQuickStep === 3 && eventQuickCreated && (
+                <div className="space-y-4">
+                  <p className="text-sm text-zinc-400">La session est créée. Le QR est prêt, puis ouvre la console animateur en mode sécurisé.</p>
+                  <div className="bg-zinc-950 border border-white/10 rounded-xl p-4 flex flex-col items-center gap-3">
+                    <QRCodeSVG value={eventQuickCreated.joinUrl} size={180} />
+                    <p className="text-xs text-zinc-500 text-center break-all">{eventQuickCreated.joinUrl}</p>
+                    <a href={eventQuickCreated.screenUrl} target="_blank" rel="noreferrer" className="text-indigo-300 hover:text-indigo-200 text-sm">
+                      Ouvrir l'écran public
+                    </a>
+                  </div>
+                  <div className="flex justify-end gap-3">
+                    <button onClick={() => setShowEventQuickModal(false)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm">Fermer</button>
+                    <button
+                      onClick={() => navigate(`/admin/game/${eventQuickCreated.gameId}?safe=1`)}
+                      className="bg-emerald-600 hover:bg-emerald-500 px-5 py-2 rounded-xl text-sm font-semibold"
+                    >
+                      Démarrer (safe mode)
+                    </button>
                   </div>
                 </div>
               )}

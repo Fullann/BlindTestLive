@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { socket } from '../lib/socket';
 import { Playlist, Track, MediaType } from '../types';
-import { ArrowLeft, Plus, Trash2, Save, Upload, Music, Video, Image as ImageIcon, Type, Youtube, Mic, Link, ArrowUp, ArrowDown } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Save, Upload, Music, Video, Image as ImageIcon, Type, Youtube, Mic, Link, ArrowUp, ArrowDown, Copy } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
 const MEDIA_TYPE_OPTIONS: { value: MediaType; label: string; icon: React.ReactNode; accept?: string }[] = [
@@ -54,6 +54,13 @@ export default function EditPlaylist() {
   const collabToken = searchParams.get('collab') || '';
   const [activeCollabToken, setActiveCollabToken] = useState(collabToken);
   const [collabLink, setCollabLink] = useState('');
+  const [collabPermission, setCollabPermission] = useState<'view' | 'edit'>('edit');
+  const [newCollabPermission, setNewCollabPermission] = useState<'view' | 'edit'>('edit');
+  const [newCollabExpiryHours, setNewCollabExpiryHours] = useState<number>(24);
+  const [collabTokens, setCollabTokens] = useState<Array<{ token: string; created_at: number; expires_at: number; permission: 'view' | 'edit'; revoked_at?: number | null }>>([]);
+  const [collabHistoryFilter, setCollabHistoryFilter] = useState<'all' | 'active' | 'expired' | 'revoked'>('all');
+  const [collabSort, setCollabSort] = useState<'newest' | 'oldest'>('newest');
+  const [bulkRevoking, setBulkRevoking] = useState(false);
   const [collabEditorsCount, setCollabEditorsCount] = useState(1);
   const [youtubePreviewSeedByTrack, setYoutubePreviewSeedByTrack] = useState<Record<string, number>>({});
   const saveDebounceRef = useRef<number | null>(null);
@@ -87,11 +94,13 @@ export default function EditPlaylist() {
       if (authLoading) return;
       if (!user) { navigate('/'); return; }
       try {
-        const { playlist: data } = activeCollabToken
+        const result = activeCollabToken
           ? await api.playlists.getWithCollab(playlistId, activeCollabToken)
           : await api.playlists.get(playlistId);
+        const data = result.playlist;
         if (!data) { navigate('/playlists'); return; }
         const parsed = toPlaylistObj(data);
+        setCollabPermission((result as any).permission === 'view' ? 'view' : 'edit');
         if (parsed.ownerId !== user.id && !activeCollabToken) { navigate('/playlists'); return; }
         setPlaylist(parsed);
       } catch (error) {
@@ -182,6 +191,10 @@ export default function EditPlaylist() {
 
   const handleSave = async () => {
     if (!playlist || !playlistId) return;
+    if (activeCollabToken && collabPermission === 'view') {
+      toastWarning('Lien en lecture seule: sauvegarde non autorisée.');
+      return;
+    }
     setSaving(true);
     try {
       if (activeCollabToken) {
@@ -210,7 +223,10 @@ export default function EditPlaylist() {
   const handleCreateCollabLink = async () => {
     if (!playlistId) return;
     try {
-      const token = activeCollabToken || (await api.playlists.createCollabToken(playlistId)).token;
+      const token = activeCollabToken || (await api.playlists.createCollabTokenWithOptions(playlistId, {
+        permission: newCollabPermission,
+        expiresHours: newCollabExpiryHours,
+      })).token;
       const link = `${window.location.origin}/admin/playlist/${playlistId}?collab=${encodeURIComponent(token)}`;
       setCollabLink(link);
       setActiveCollabToken(token);
@@ -220,6 +236,62 @@ export default function EditPlaylist() {
       toastError(error?.message || 'Impossible de créer le lien de coédition');
     }
   };
+
+  const refreshCollabTokens = useCallback(async () => {
+    if (!playlistId || activeCollabToken) return;
+    try {
+      const res = await api.playlists.listCollabTokens(playlistId);
+      setCollabTokens((res.tokens || []) as any);
+    } catch {
+      // ignore
+    }
+  }, [playlistId, activeCollabToken]);
+
+  const handleRevokeToken = async (token: string) => {
+    if (!playlistId) return;
+    try {
+      await api.playlists.revokeCollabToken(playlistId, token);
+      toastSuccess('Lien révoqué');
+      await refreshCollabTokens();
+    } catch {
+      toastError('Impossible de révoquer ce lien');
+    }
+  };
+
+  const handleCopyExistingLink = async (token: string) => {
+    if (!playlistId) return;
+    const link = `${window.location.origin}/admin/playlist/${playlistId}?collab=${encodeURIComponent(token)}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      toastSuccess('Lien copié');
+    } catch {
+      toastError('Impossible de copier le lien');
+    }
+  };
+
+  const handleRevokeAllActiveLinks = async () => {
+    if (!playlistId) return;
+    const activeTokens = collabTokens.filter((entry) => !entry.revoked_at && entry.expires_at > Date.now());
+    if (activeTokens.length === 0) {
+      toastInfo('Aucun lien actif à révoquer.');
+      return;
+    }
+    if (!window.confirm(`Révoquer ${activeTokens.length} lien(s) actif(s) ?`)) return;
+    setBulkRevoking(true);
+    try {
+      await Promise.all(activeTokens.map((entry) => api.playlists.revokeCollabToken(playlistId, entry.token)));
+      toastSuccess(`${activeTokens.length} lien(s) révoqué(s).`);
+      await refreshCollabTokens();
+    } catch {
+      toastError('Impossible de révoquer tous les liens.');
+    } finally {
+      setBulkRevoking(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshCollabTokens();
+  }, [refreshCollabTokens]);
 
   const addTrack = () => {
     if (!playlist) return;
@@ -389,6 +461,28 @@ export default function EditPlaylist() {
 
   if (loading) return <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">Chargement...</div>;
   if (!playlist) return <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">Playlist introuvable</div>;
+  const collabStatusCounters = collabTokens.reduce(
+    (acc, entry) => {
+      const isRevoked = !!entry.revoked_at;
+      const isExpired = entry.expires_at <= Date.now();
+      if (isRevoked) acc.revoked += 1;
+      else if (isExpired) acc.expired += 1;
+      else acc.active += 1;
+      acc.all += 1;
+      return acc;
+    },
+    { all: 0, active: 0, expired: 0, revoked: 0 },
+  );
+
+  const filteredCollabTokens = collabTokens.filter((entry) => {
+    const isRevoked = !!entry.revoked_at;
+    const isExpired = entry.expires_at <= Date.now();
+    if (collabHistoryFilter === 'all') return true;
+    if (collabHistoryFilter === 'revoked') return isRevoked;
+    if (collabHistoryFilter === 'expired') return !isRevoked && isExpired;
+    if (collabHistoryFilter === 'active') return !isRevoked && !isExpired;
+    return true;
+  }).sort((a, b) => (collabSort === 'newest' ? b.created_at - a.created_at : a.created_at - b.created_at));
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white app-shell">
@@ -406,10 +500,15 @@ export default function EditPlaylist() {
               {collabEditorsCount} éditeurs en ligne
             </span>
           )}
+          {activeCollabToken && collabPermission === 'view' && (
+            <span className="text-xs bg-amber-600/20 border border-amber-500/30 text-amber-300 px-2 py-0.5 rounded-full">
+              Lecture seule
+            </span>
+          )}
         </div>
         <button
           onClick={() => void handleSave()}
-          disabled={saving}
+          disabled={saving || (activeCollabToken && collabPermission === 'view')}
           className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors"
         >
           <Save className="w-4 h-4" />
@@ -439,10 +538,30 @@ export default function EditPlaylist() {
         {/* Actions row */}
         <div className="flex items-center gap-3 mb-6">
           {playlist.ownerId === user?.id && (
-            <button onClick={handleCreateCollabLink} className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 border border-white/10 hover:border-white/20 rounded-xl px-3 py-2 transition-colors">
-              <Link className="w-3.5 h-3.5" />
-              Lien coédition
-            </button>
+            <>
+              <select
+                value={newCollabPermission}
+                onChange={(e) => setNewCollabPermission(e.target.value as 'view' | 'edit')}
+                className="bg-zinc-900 border border-white/10 rounded-xl px-3 py-2 text-sm"
+              >
+                <option value="edit">Lien édition</option>
+                <option value="view">Lien lecture seule</option>
+              </select>
+              <select
+                value={newCollabExpiryHours}
+                onChange={(e) => setNewCollabExpiryHours(Math.max(1, Number(e.target.value) || 24))}
+                className="bg-zinc-900 border border-white/10 rounded-xl px-3 py-2 text-sm"
+              >
+                <option value={6}>Expire dans 6h</option>
+                <option value={24}>Expire dans 24h</option>
+                <option value={72}>Expire dans 3 jours</option>
+                <option value={168}>Expire dans 7 jours</option>
+              </select>
+              <button onClick={handleCreateCollabLink} className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 border border-white/10 hover:border-white/20 rounded-xl px-3 py-2 transition-colors">
+                <Link className="w-3.5 h-3.5" />
+                Créer lien
+              </button>
+            </>
           )}
         </div>
 
@@ -453,7 +572,80 @@ export default function EditPlaylist() {
         )}
         {activeCollabToken && (
           <div className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
-            Coédition active · {collabEditorsCount} éditeur(s) connecté(s)
+            Coédition active ({collabPermission === 'view' ? 'lecture seule' : 'édition'}) · {collabEditorsCount} éditeur(s) connecté(s)
+          </div>
+        )}
+        {playlist.ownerId === user?.id && collabTokens.length > 0 && (
+          <div className="mb-6 rounded-xl border border-white/10 bg-zinc-900/50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <p className="text-xs uppercase tracking-wider text-zinc-500">Historique des liens</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] text-zinc-500">
+                  Tous {collabStatusCounters.all} · Actifs {collabStatusCounters.active} · Expirés {collabStatusCounters.expired} · Révoqués {collabStatusCounters.revoked}
+                </span>
+                <select
+                  value={collabHistoryFilter}
+                  onChange={(e) => setCollabHistoryFilter(e.target.value as 'all' | 'active' | 'expired' | 'revoked')}
+                  className="bg-zinc-900 border border-white/10 rounded-lg px-2 py-1 text-xs"
+                >
+                  <option value="all">Tous</option>
+                  <option value="active">Actifs</option>
+                  <option value="expired">Expirés</option>
+                  <option value="revoked">Révoqués</option>
+                </select>
+                <select
+                  value={collabSort}
+                  onChange={(e) => setCollabSort(e.target.value as 'newest' | 'oldest')}
+                  className="bg-zinc-900 border border-white/10 rounded-lg px-2 py-1 text-xs"
+                >
+                  <option value="newest">Plus récent</option>
+                  <option value="oldest">Plus ancien</option>
+                </select>
+                <button
+                  onClick={() => void handleRevokeAllActiveLinks()}
+                  disabled={bulkRevoking || collabStatusCounters.active === 0}
+                  className="text-red-300 hover:text-red-200 border border-red-500/30 rounded px-2 py-1 text-xs disabled:opacity-50"
+                >
+                  {bulkRevoking ? 'Révocation…' : 'Révoquer tous les actifs'}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {filteredCollabTokens.map((entry) => {
+                const isRevoked = !!entry.revoked_at;
+                const isExpired = entry.expires_at <= Date.now();
+                return (
+                <div key={`${entry.token}-${entry.created_at}`} className="flex items-center justify-between gap-3 bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-xs">
+                  <div className="min-w-0">
+                    <p className="text-zinc-300 truncate">
+                      {entry.permission === 'view' ? 'Lecture' : 'Edition'} · expire le {new Date(entry.expires_at).toLocaleString('fr-FR')}
+                    </p>
+                    <p className="text-zinc-500 truncate">…{entry.token.slice(-12)}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {!isRevoked && (
+                      <button
+                        onClick={() => void handleCopyExistingLink(entry.token)}
+                        className="text-indigo-300 hover:text-indigo-200 border border-indigo-500/30 rounded px-2 py-1 inline-flex items-center gap-1"
+                      >
+                        <Copy className="w-3 h-3" />
+                        Copier
+                      </button>
+                    )}
+                    {!isRevoked && !isExpired ? (
+                      <button
+                        onClick={() => void handleRevokeToken(entry.token)}
+                        className="text-red-300 hover:text-red-200 border border-red-500/30 rounded px-2 py-1"
+                      >
+                        Révoquer
+                      </button>
+                    ) : (
+                      <span className="text-zinc-500">{isRevoked ? 'Révoqué' : 'Expiré'}</span>
+                    )}
+                  </div>
+                </div>
+              );})}
+            </div>
           </div>
         )}
 

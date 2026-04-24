@@ -481,6 +481,33 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  app.get("/api/health/realtime", async (_req, res) => {
+    let dbStatus: "enabled" | "disabled" | "error" = ENABLE_DB ? "enabled" : "disabled";
+    if (ENABLE_DB && dbPool) {
+      try {
+        await dbPool.query("SELECT 1");
+      } catch {
+        dbStatus = "error";
+      }
+    }
+    const activeSockets = io.engine.clientsCount;
+    const devicesSockets = devicesNamespace.sockets.size;
+    const payload = {
+      status: dbStatus === "error" ? "degraded" : "ok",
+      realtime: {
+        activeSockets,
+        devicesSockets,
+        activeGames: Object.keys(activeGames).length,
+      },
+      db: dbStatus,
+      serverTs: Date.now(),
+    };
+    if (dbStatus === "error") {
+      return res.status(503).json(payload);
+    }
+    return res.json(payload);
+  });
+
   app.get("/api/metrics", (req, res) => {
     if (process.env.NODE_ENV === "production") {
       const token = String(req.headers["x-metrics-token"] || "");

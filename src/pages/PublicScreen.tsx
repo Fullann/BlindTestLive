@@ -5,7 +5,7 @@ import { GameState, Player } from '../types';
 import { api } from '../api';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trophy, Music, Users } from 'lucide-react';
+import { Trophy, Music, Users, Sparkles } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 const Timer = ({ gameState, duration, strictMode }: { gameState: GameState; duration?: number; strictMode: boolean }) => {
@@ -124,35 +124,11 @@ export default function PublicScreen() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [branding, setBranding] = useState<{ client_name?: string; logo_url?: string; primary_color?: string; accent_color?: string } | null>(null);
   const hasFinishedRef = useRef(false);
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    if (gameState?.playlist && gameState.currentTrackIndex !== undefined) {
-      const track = gameState.playlist[gameState.currentTrackIndex];
-      // Reset audio/video to start time when track changes
-      try {
-        if (audioRef.current) {
-          audioRef.current.currentTime = track?.startTime || 0;
-        }
-        if (videoRef.current) {
-          videoRef.current.currentTime = track?.startTime || 0;
-        }
-      } catch (e) {
-        // Ignore if media is not loaded yet, onLoadedMetadata will handle it
-      }
-    }
-  }, [gameState?.currentTrackIndex, gameState?.playlist]);
-
-  useEffect(() => {
-    if (gameState?.status === 'playing') {
-      audioRef.current?.play().catch(() => {});
-      videoRef.current?.play().catch(() => {});
-    } else {
-      audioRef.current?.pause();
-      videoRef.current?.pause();
-    }
-  }, [gameState?.status]);
+  const prevTrackIndexRef = useRef<number | null>(null);
+  const [sponsorSlideIndex, setSponsorSlideIndex] = useState(0);
+  const [showRoundTransition, setShowRoundTransition] = useState(false);
+  const [roundTransitionLabel, setRoundTransitionLabel] = useState('');
+  const [beatTick, setBeatTick] = useState(0);
 
   useEffect(() => {
     if (!gameId) return;
@@ -202,19 +178,47 @@ export default function PublicScreen() {
       }
     };
 
-    const handleSound = (type: 'buzz' | 'correct' | 'wrong') => {
-      playSound(type);
-    };
-
     socket.on('game:stateUpdate', handleStateUpdate);
-    socket.on('game:playSound', handleSound);
 
     return () => {
       socket.off('game:stateUpdate', handleStateUpdate);
-      socket.off('game:playSound', handleSound);
       socket.off('connect', joinAsScreen);
     };
   }, [gameId]);
+
+  useEffect(() => {
+    const hasSponsorContent = Boolean(branding?.client_name || branding?.logo_url);
+    if (!hasSponsorContent) {
+      setSponsorSlideIndex(0);
+      return;
+    }
+    const interval = window.setInterval(() => {
+      setSponsorSlideIndex((prev) => (prev + 1) % 3);
+    }, 4500);
+    return () => window.clearInterval(interval);
+  }, [branding?.client_name, branding?.logo_url]);
+
+  useEffect(() => {
+    if (!gameState || gameState.youtubeVideoId) return;
+    const currentIdx = gameState.currentTrackIndex;
+    const prevIdx = prevTrackIndexRef.current;
+    if (prevIdx !== null && currentIdx !== prevIdx) {
+      setRoundTransitionLabel(`Manche ${currentIdx + 1}`);
+      setShowRoundTransition(true);
+      const timer = window.setTimeout(() => setShowRoundTransition(false), 1400);
+      prevTrackIndexRef.current = currentIdx;
+      return () => window.clearTimeout(timer);
+    }
+    prevTrackIndexRef.current = currentIdx;
+  }, [gameState?.currentTrackIndex, gameState?.youtubeVideoId, gameState]);
+
+  useEffect(() => {
+    if (!gameState || gameState.status !== 'playing') return;
+    const interval = window.setInterval(() => {
+      setBeatTick((prev) => prev + 1);
+    }, 180);
+    return () => window.clearInterval(interval);
+  }, [gameState?.status, gameState]);
 
   useEffect(() => {
     if (!gameId) return;
@@ -295,6 +299,16 @@ export default function PublicScreen() {
         : gameState.theme === 'minimal'
           ? 'bg-zinc-100 text-zinc-900'
           : 'bg-zinc-950 text-white';
+  const sponsorSlides = [
+    branding?.client_name ? `Événement ${branding.client_name}` : 'Événement BlindTestLive',
+    'Merci à notre sponsor',
+    `Palette: ${primaryColor} · ${accentColor}`,
+  ];
+  const ledHeadlineClass = 'font-black uppercase tracking-[0.06em] [text-shadow:0_0_16px_rgba(99,102,241,0.35)]';
+  const visualizerBars = Array.from({ length: 16 }, (_, index) => {
+    const wave = Math.sin((beatTick + index) / 1.6);
+    return Math.max(18, Math.round(42 + wave * 36));
+  });
 
   return (
     <div className={`min-h-screen ${themeClass} flex flex-col overflow-hidden app-shell`}>
@@ -352,6 +366,49 @@ export default function PublicScreen() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex relative">
+        <AnimatePresence>
+          {showRoundTransition && (
+            <motion.div className="absolute inset-0 z-40 pointer-events-none" key={`transition-${roundTransitionLabel}`}>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 0.35 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0"
+                style={{ background: `radial-gradient(circle at center, ${accentColor}99 0%, ${primaryColor}44 35%, transparent 75%)` }}
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.92 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 1.04 }}
+                className="absolute inset-0 flex items-center justify-center"
+              >
+                <div className="px-10 py-5 rounded-2xl bg-black/70 border border-white/20 backdrop-blur-lg shadow-2xl">
+                  <p className="text-xs uppercase tracking-[0.2em] text-zinc-300 text-center mb-1">Transition sponsor</p>
+                  <p className="text-4xl font-black text-center">{roundTransitionLabel}</p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div className="absolute top-5 right-5 z-30 pointer-events-none">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={`sponsor-${sponsorSlideIndex}`}
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={{ duration: 0.35 }}
+              className="min-w-[300px] bg-black/45 border border-white/10 rounded-xl px-4 py-3 backdrop-blur-md"
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-indigo-300" />
+                <p className="text-xs uppercase tracking-widest text-zinc-400">Sponsor live</p>
+              </div>
+              <p className="text-sm mt-1 text-zinc-100">{sponsorSlides[sponsorSlideIndex]}</p>
+            </motion.div>
+          </AnimatePresence>
+        </div>
         
         {/* Left: Game Status / Track Info / Buzzer Animation */}
         <div className="flex-1 flex flex-col items-center justify-center p-12 relative z-10">
@@ -378,7 +435,7 @@ export default function PublicScreen() {
                 exit={{ opacity: 0, scale: 1.05 }}
                 className="text-center bg-zinc-900/85 border border-white/10 rounded-3xl p-12 max-w-4xl"
               >
-                <h1 className="text-5xl font-bold mb-6">Tutoriel joueur</h1>
+                <h1 className={`text-5xl mb-6 ${ledHeadlineClass}`}>Tutoriel joueur</h1>
                 <div className="space-y-3 text-zinc-300 text-2xl">
                   <p>1. Rejoins avec le QR code ou le code partie</p>
                   <p>2. Appuie sur BUZZ dès que tu penses avoir la réponse</p>
@@ -431,11 +488,13 @@ export default function PublicScreen() {
                   </div>
                 ) : currentTrack?.mediaType === 'video' && currentTrack.mediaUrl ? (
                   <div className="mb-8 rounded-2xl overflow-hidden shadow-2xl border-4 border-indigo-500/30">
-                    <video 
-                      ref={videoRef} 
-                      src={currentTrack.mediaUrl} 
-                      loop 
-                      className="w-full h-auto max-h-[50vh] object-contain bg-black/50" 
+                    <video
+                      src={currentTrack.mediaUrl}
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      className="w-full h-auto max-h-[50vh] object-contain bg-black/50"
                       onLoadedMetadata={(e) => {
                         if (currentTrack.startTime) {
                           e.currentTarget.currentTime = currentTrack.startTime;
@@ -474,23 +533,10 @@ export default function PublicScreen() {
                   <div className="w-48 h-48 bg-zinc-900 rounded-full flex items-center justify-center mx-auto mb-12 border-4 border-indigo-500/30 relative">
                     <div className="absolute inset-0 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin"></div>
                     <Music className="w-20 h-20 text-indigo-400" />
-                    {(currentTrack?.mediaType === 'audio' || !currentTrack?.mediaType) && currentTrack?.mediaUrl && (
-                      <audio 
-                        ref={audioRef} 
-                        src={currentTrack.mediaUrl} 
-                        loop 
-                        className="hidden" 
-                        onLoadedMetadata={(e) => {
-                          if (currentTrack.startTime) {
-                            e.currentTarget.currentTime = currentTrack.startTime;
-                          }
-                        }}
-                      />
-                    )}
                   </div>
                 )}
                 
-                <h1 className="text-7xl font-bold tracking-tight italic text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">
+                <h1 className={`text-7xl tracking-tight italic text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 ${ledHeadlineClass}`}>
                   {currentTrack?.mediaType === 'image' ? 'Regardez bien...' : 
                    currentTrack?.mediaType === 'text' ? 'Lisez bien...' : 
                    'Écoutez bien...'}
@@ -508,6 +554,18 @@ export default function PublicScreen() {
                     duration={trackDuration}
                     strictMode={Boolean(gameState.strictTimerEnabled)}
                   />
+                )}
+                {gameState.status === 'playing' && (
+                  <div className="mt-6 flex items-end justify-center gap-1.5 h-16">
+                    {visualizerBars.map((h, idx) => (
+                      <motion.div
+                        key={`bar-${idx}`}
+                        className="w-2 rounded-full bg-gradient-to-t from-indigo-500/70 via-fuchsia-400/85 to-emerald-300/80"
+                        animate={{ height: h }}
+                        transition={{ duration: 0.16, ease: 'easeOut' }}
+                      />
+                    ))}
+                  </div>
                 )}
               </motion.div>
             )}
@@ -551,7 +609,7 @@ export default function PublicScreen() {
                   </>
                 ) : (
                   <>
-                    <h2 className="text-3xl text-zinc-400 uppercase tracking-widest font-semibold mb-8">La réponse était</h2>
+                    <h2 className={`text-3xl text-zinc-300 uppercase tracking-widest font-semibold mb-8 ${ledHeadlineClass}`}>La réponse était</h2>
                     {currentTrack?.answerImageUrl && (
                       <div className="mb-8 rounded-2xl overflow-hidden shadow-2xl border-4 border-emerald-500/30">
                         <img
@@ -594,16 +652,23 @@ export default function PublicScreen() {
                       const color = isFirst ? 'bg-yellow-500' : isSecond ? 'bg-zinc-300' : 'bg-amber-600';
                       const delay = isFirst ? 0.4 : isSecond ? 0.2 : 0;
                       
+                      const medalGlow = isFirst ? 'shadow-[0_0_40px_rgba(250,204,21,0.35)]' : isSecond ? 'shadow-[0_0_35px_rgba(212,212,216,0.28)]' : 'shadow-[0_0_30px_rgba(217,119,6,0.28)]';
                       return (
                         <motion.div 
                           key={player.id}
-                          initial={{ height: 0 }}
-                          animate={{ height: '100%' }}
-                          transition={{ delay, duration: 0.5 }}
+                          initial={{ height: 0, y: 30, opacity: 0 }}
+                          animate={{ height: '100%', y: 0, opacity: 1 }}
+                          transition={{ delay, duration: 0.6, ease: 'easeOut' }}
                           className={`relative w-48 flex flex-col justify-end ${height}`}
                         >
                           <div className="absolute -top-24 left-0 right-0 text-center">
-                            <div className="w-12 h-12 mx-auto rounded-full mb-2" style={{ backgroundColor: player.color }} />
+                            <motion.div
+                              initial={{ scale: 0.8 }}
+                              animate={{ scale: [0.92, 1.04, 1] }}
+                              transition={{ delay: delay + 0.25, duration: 0.6 }}
+                              className={`w-12 h-12 mx-auto rounded-full mb-2 ${medalGlow}`}
+                              style={{ backgroundColor: player.color }}
+                            />
                             <p className="font-bold text-xl truncate px-2">{player.name}</p>
                             <p className="text-2xl font-black" style={{ color: player.color }}>{player.score} pts</p>
                           </div>

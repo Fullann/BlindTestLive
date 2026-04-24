@@ -59,20 +59,29 @@ async function ensureCollabSchema() {
       INDEX idx_playlist_collab_exp (expires_at)
     )`,
   );
+  await addColumnIfMissing('playlist_collab_tokens', 'permission', "permission VARCHAR(16) NOT NULL DEFAULT 'edit'");
+  await addColumnIfMissing('playlist_collab_tokens', 'revoked_at', 'revoked_at BIGINT NULL');
   collabSchemaChecked = true;
 }
 
-async function canAccessPlaylist(playlist: any, userId: string, collabToken?: string | null): Promise<boolean> {
-  if (playlist.owner_id === userId) return true;
-  if (!collabToken) return false;
+async function getCollabAccess(
+  playlist: any,
+  userId: string,
+  collabToken?: string | null,
+): Promise<{ allowed: boolean; permission: 'view' | 'edit' }> {
+  if (playlist.owner_id === userId) return { allowed: true, permission: 'edit' };
+  if (!collabToken) return { allowed: false, permission: 'view' };
   await ensureCollabSchema();
   const [rows] = await pool.query(
-    `SELECT 1 FROM playlist_collab_tokens
-     WHERE playlist_id = ? AND token = ? AND expires_at > ?
+    `SELECT permission FROM playlist_collab_tokens
+     WHERE playlist_id = ? AND token = ? AND expires_at > ? AND (revoked_at IS NULL OR revoked_at = 0)
      LIMIT 1`,
     [playlist.id, collabToken, Date.now()],
   );
-  return (rows as any[]).length > 0;
+  const tokenRow = (rows as any[])[0];
+  if (!tokenRow) return { allowed: false, permission: 'view' };
+  const permission = String(tokenRow.permission || 'edit') === 'view' ? 'view' : 'edit';
+  return { allowed: true, permission };
 }
 
 function parseTracksValue(value: unknown): unknown[] {
@@ -175,14 +184,57 @@ router.post('/:id/collab-token', async (req: Request, res: Response) => {
     if (playlist.owner_id !== req.user!.userId) return res.status(403).json({ error: 'Accès refusé' });
     const token = `${uuidv4().replace(/-/g, '')}${Date.now().toString(36)}`;
     const now = Date.now();
-    const expiresAt = now + 24 * 60 * 60 * 1000;
+    const requestedPermission = String((req.body?.permission as string) || 'edit');
+    const permission: 'view' | 'edit' = requestedPermission === 'view' ? 'view' : 'edit';
+    const expiresHours = Math.max(1, Math.min(24 * 30, Number(req.body?.expiresHours) || 24));
+    const expiresAt = now + expiresHours * 60 * 60 * 1000;
     await pool.query(
-      'INSERT INTO playlist_collab_tokens (playlist_id, token, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?)',
-      [playlist.id, token, req.user!.userId, now, expiresAt],
+      'INSERT INTO playlist_collab_tokens (playlist_id, token, created_by, created_at, expires_at, permission, revoked_at) VALUES (?, ?, ?, ?, ?, ?, NULL)',
+      [playlist.id, token, req.user!.userId, now, expiresAt, permission],
     );
-    return res.json({ token, expiresAt });
+    return res.json({ token, expiresAt, permission });
   } catch (err) {
     console.error('POST collab token error', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+router.get('/:id/collab-tokens', async (req: Request, res: Response) => {
+  try {
+    await ensureCollabSchema();
+    const [rows] = await pool.query('SELECT id, owner_id FROM playlists WHERE id = ?', [req.params.id]);
+    const playlist = (rows as any[])[0];
+    if (!playlist) return res.status(404).json({ error: 'Playlist introuvable' });
+    if (playlist.owner_id !== req.user!.userId) return res.status(403).json({ error: 'Accès refusé' });
+    const [tokensRows] = await pool.query(
+      `SELECT token, created_by, created_at, expires_at, permission, revoked_at
+       FROM playlist_collab_tokens
+       WHERE playlist_id = ?
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      [req.params.id],
+    );
+    return res.json({ tokens: tokensRows });
+  } catch (err) {
+    console.error('GET collab tokens error', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+router.delete('/:id/collab-token/:token', async (req: Request, res: Response) => {
+  try {
+    await ensureCollabSchema();
+    const [rows] = await pool.query('SELECT id, owner_id FROM playlists WHERE id = ?', [req.params.id]);
+    const playlist = (rows as any[])[0];
+    if (!playlist) return res.status(404).json({ error: 'Playlist introuvable' });
+    if (playlist.owner_id !== req.user!.userId) return res.status(403).json({ error: 'Accès refusé' });
+    await pool.query(
+      'UPDATE playlist_collab_tokens SET revoked_at = ? WHERE playlist_id = ? AND token = ?',
+      [Date.now(), req.params.id, req.params.token],
+    );
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE collab token error', err);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
@@ -257,11 +309,11 @@ router.get('/:id', async (req: Request, res: Response) => {
     const playlist = (rows as any[])[0];
     if (!playlist) return res.status(404).json({ error: 'Playlist introuvable' });
     const collabToken = String((req.query.collabToken as string) || '');
-    const allowed = await canAccessPlaylist(playlist, req.user!.userId, collabToken || null);
-    if (!allowed && playlist.visibility !== 'public') {
+    const access = await getCollabAccess(playlist, req.user!.userId, collabToken || null);
+    if (!access.allowed && playlist.visibility !== 'public') {
       return res.status(403).json({ error: 'Accès refusé' });
     }
-    return res.json({ playlist });
+    return res.json({ playlist, permission: access.allowed ? access.permission : 'view' });
   } catch (err) {
     console.error('GET playlist error', err);
     return res.status(500).json({ error: 'Erreur serveur' });
@@ -298,8 +350,11 @@ router.put('/:id', async (req: Request, res: Response) => {
     const playlist = (rows as any[])[0];
     if (!playlist) return res.status(404).json({ error: 'Playlist introuvable' });
     const collabToken = String((req.body?.collabToken as string) || '');
-    const allowed = await canAccessPlaylist(playlist, req.user!.userId, collabToken || null);
-    if (!allowed) return res.status(403).json({ error: 'Accès refusé' });
+    const access = await getCollabAccess(playlist, req.user!.userId, collabToken || null);
+    if (!access.allowed) return res.status(403).json({ error: 'Accès refusé' });
+    if (playlist.owner_id !== req.user!.userId && access.permission !== 'edit') {
+      return res.status(403).json({ error: 'Lien en lecture seule' });
+    }
 
     const { name, tracks, visibility, category } = req.body as { name?: string; tracks?: unknown[]; visibility?: string; category?: string };
     const updates: string[] = [];

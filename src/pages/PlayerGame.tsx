@@ -74,6 +74,7 @@ export default function PlayerGame() {
   const [profilePreviewBadges, setProfilePreviewBadges] = useState<string[]>([]);
   const [textAnswerDraft, setTextAnswerDraft] = useState('');
   const [sendingTextAnswer, setSendingTextAnswer] = useState(false);
+  const [pingMs, setPingMs] = useState<number | null>(null);
   // WebRTC mic
   const [micActive, setMicActive] = useState(false);
   const [micError, setMicError] = useState('');
@@ -231,6 +232,24 @@ export default function PlayerGame() {
     };
   }, [gameId, navigate, soundEnabled, hapticEnabled]);
 
+  useEffect(() => {
+    if (!gameId) return;
+    let active = true;
+    const measure = () => {
+      const startedAt = performance.now();
+      socket.emit('game:check', gameId, () => {
+        if (!active) return;
+        setPingMs(Math.round(Math.max(0, performance.now() - startedAt)));
+      });
+    };
+    measure();
+    const id = window.setInterval(measure, 10000);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, [gameId]);
+
   const handleClaimProfile = async () => {
     if (!gameState || !player || !gameId) return;
     const publicId = localStorage.getItem('blindtest_player_public_id');
@@ -364,6 +383,9 @@ export default function PlayerGame() {
     (round) => gameState.currentTrackIndex >= round.startIndex && gameState.currentTrackIndex <= round.endIndex,
   );
   const textModeEnabled = Boolean(currentRound?.textAnswersEnabled);
+  const buzzLatencyMs = isMyBuzz && gameState.trackStartTime && gameState.buzzTimestamp
+    ? Math.max(0, gameState.buzzTimestamp - gameState.trackStartTime)
+    : null;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-6 relative overflow-hidden app-shell">
@@ -397,6 +419,10 @@ export default function PlayerGame() {
             {gameState.status === 'revealed' && 'Réponse révélée'}
             {gameState.status === 'finished' && 'Partie terminée'}
           </p>
+          <div className="flex items-center justify-center gap-2 mt-2 text-[11px] text-zinc-500">
+            {pingMs !== null && <span>Latence réseau: {pingMs} ms</span>}
+            {buzzLatencyMs !== null && <span>• Réaction buzz: {(buzzLatencyMs / 1000).toFixed(2)} s</span>}
+          </div>
         </div>
 
         {/* Mic active indicator */}

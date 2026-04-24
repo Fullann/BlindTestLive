@@ -7,7 +7,7 @@ import { MediaType } from '../types';
 import {
   Music2, Video, Image as ImageIcon, Youtube, Type, Mic, Link,
   Plus, ArrowLeft, Trash2, Edit3, Eye, Lock, Globe, Loader2,
-  FileAudio, ChevronRight, Music, List
+  FileAudio, ChevronRight, Music, List, Share2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -172,6 +172,17 @@ export default function Playlists() {
     }
   };
 
+  const handleShare = async (playlistId: string) => {
+    try {
+      const { token } = await api.playlists.createCollabToken(playlistId);
+      const link = `${window.location.origin}/admin/playlist/${playlistId}?collab=${encodeURIComponent(token)}`;
+      await navigator.clipboard.writeText(link);
+      toastSuccess('Lien de partage copié');
+    } catch {
+      toastError('Impossible de générer le lien de partage');
+    }
+  };
+
   if (authLoading) return (
     <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
       <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
@@ -262,6 +273,13 @@ export default function Playlists() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => void handleShare(pl.id)}
+                          className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-emerald-300 border border-white/8 hover:border-emerald-500/30 rounded-lg px-3 py-1.5 transition-all"
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                          Partager
+                        </button>
                         <button
                           onClick={() => navigate(`/playlists/${pl.id}`)}
                           className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-indigo-300 border border-white/8 hover:border-indigo-500/30 rounded-lg px-3 py-1.5 transition-all"

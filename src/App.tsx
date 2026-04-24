@@ -1,10 +1,11 @@
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { ToastProvider } from './context/ToastContext';
 import { ThemeToggle } from './components/ThemeToggle';
+import { socket } from './lib/socket';
 
 const Home = lazy(() => import('./pages/Home'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
@@ -25,12 +26,67 @@ const SponsorScreen = lazy(() => import('./pages/SponsorScreen'));
 const Playlists = lazy(() => import('./pages/Playlists'));
 
 export default function App() {
+  const [socketBanner, setSocketBanner] = useState<{ visible: boolean; message: string; level: 'warning' | 'error' }>({
+    visible: false,
+    message: '',
+    level: 'warning',
+  });
+
+  useEffect(() => {
+    const onState = (event: Event) => {
+      const detail = (event as CustomEvent<any>).detail || {};
+      if (detail.connected) {
+        setSocketBanner({ visible: false, message: '', level: 'warning' });
+        return;
+      }
+      if (detail.reconnecting) {
+        setSocketBanner({
+          visible: true,
+          message: 'Connexion instable. Reconnexion automatique en cours...',
+          level: 'warning',
+        });
+        return;
+      }
+      setSocketBanner({
+        visible: true,
+        message: 'Connexion temps réel indisponible. Vérifie le réseau puis réessaie.',
+        level: 'error',
+      });
+    };
+
+    const onDisconnected = () => {
+      setSocketBanner({
+        visible: true,
+        message: 'Connexion instable. Reconnexion automatique en cours...',
+        level: 'warning',
+      });
+    };
+
+    window.addEventListener('blindtest:socket-state', onState as EventListener);
+    socket.on('disconnect', onDisconnected);
+    return () => {
+      window.removeEventListener('blindtest:socket-state', onState as EventListener);
+      socket.off('disconnect', onDisconnected);
+    };
+  }, []);
+
   return (
     <ErrorBoundary>
       <ThemeProvider>
         <ToastProvider>
         <AuthProvider>
           <BrowserRouter>
+            {socketBanner.visible && (
+              <div
+                className={`fixed top-0 inset-x-0 z-[70] px-4 py-2 text-center text-sm font-medium ${
+                  socketBanner.level === 'error'
+                    ? 'bg-red-600 text-white'
+                    : 'bg-amber-500 text-zinc-950'
+                }`}
+              >
+                {socketBanner.message}
+              </div>
+            )}
             <Suspense fallback={<div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center app-shell">Chargement...</div>}>
               <Routes>
                 <Route path="/" element={<Home />} />

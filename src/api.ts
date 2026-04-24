@@ -89,10 +89,10 @@ export const api = {
       request<{ playlists: any[] }>('GET', '/api/playlists/public'),
 
     get: (id: string) =>
-      request<{ playlist: any }>('GET', `/api/playlists/${id}`),
+      request<{ playlist: any; permission?: 'view' | 'edit' }>('GET', `/api/playlists/${id}`),
 
     getWithCollab: (id: string, collabToken: string) =>
-      request<{ playlist: any }>('GET', `/api/playlists/${id}?collabToken=${encodeURIComponent(collabToken)}`),
+      request<{ playlist: any; permission?: 'view' | 'edit' }>('GET', `/api/playlists/${id}?collabToken=${encodeURIComponent(collabToken)}`),
 
     create: (name: string, tracks: unknown[] = [], visibility: string = 'private', category: string = 'general') =>
       request<{ playlist: any }>('POST', '/api/playlists', { name, tracks, visibility, category }),
@@ -107,7 +107,21 @@ export const api = {
     ) => request<{ success: boolean }>('PUT', `/api/playlists/${id}`, { ...data, collabToken }),
 
     createCollabToken: (id: string) =>
-      request<{ token: string; expiresAt: number }>('POST', `/api/playlists/${id}/collab-token`),
+      request<{ token: string; expiresAt: number; permission: 'view' | 'edit' }>('POST', `/api/playlists/${id}/collab-token`),
+
+    createCollabTokenWithOptions: (
+      id: string,
+      data: { permission?: 'view' | 'edit'; expiresHours?: number },
+    ) => request<{ token: string; expiresAt: number; permission: 'view' | 'edit' }>('POST', `/api/playlists/${id}/collab-token`, data),
+
+    listCollabTokens: (id: string) =>
+      request<{ tokens: Array<{ token: string; created_by: string; created_at: number; expires_at: number; permission: 'view' | 'edit'; revoked_at?: number | null }> }>(
+        'GET',
+        `/api/playlists/${id}/collab-tokens`,
+      ),
+
+    revokeCollabToken: (id: string, token: string) =>
+      request<{ success: boolean }>('DELETE', `/api/playlists/${id}/collab-token/${encodeURIComponent(token)}`),
 
     delete: (id: string) =>
       request<{ success: boolean }>('DELETE', `/api/playlists/${id}`),
