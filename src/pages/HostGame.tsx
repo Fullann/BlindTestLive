@@ -376,10 +376,6 @@ export default function HostGame() {
     }
   }, [gameState?.status, ytPlayer]);
 
-  if (!gameState) {
-    return <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">Chargement...</div>;
-  }
-
   const handleRequestPlayerMic = (playerId: string) => {
     socket.emit('host:requestPlayerMic', { gameId, hostToken, playerId }, (res: any) => {
       if (!res?.success) toastError(res?.error || 'Impossible d\'activer le micro');
@@ -444,6 +440,10 @@ export default function HostGame() {
   useEffect(() => {
     const media = hostTrackAudioRef.current;
     if (!media) return;
+    if (!gameState) {
+      media.pause();
+      return;
+    }
     const shouldPlay = canHostPlayTrackAudio && (gameState.status === 'playing' || hostPrelisten);
     if (!shouldPlay || !hostAudioEnabled) {
       fadeHostAudioTo(0);
@@ -472,13 +472,17 @@ export default function HostGame() {
     currentTrack?.id,
     currentTrack?.mediaUrl,
     currentTrack?.startTime,
-    gameState.status,
+    gameState?.status,
     hostAudioEnabled,
     hostAudioVolume,
     hostPrelisten,
     normalizedTrackGain,
     fadeHostAudioTo,
   ]);
+
+  if (!gameState) {
+    return <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">Chargement...</div>;
+  }
 
   const handleStartTrack = () => {
     if (isYoutubeMode) {
