@@ -3,10 +3,10 @@ import { io } from "socket.io-client";
 // Connect to the same host that serves the app
 export const socket = io("/", {
   autoConnect: true,
-  // On some shared hosts/WAFs, HTTP polling can trigger anti-bot checks.
-  // WebSocket-only is more stable and avoids repeated polling requests.
-  transports: ["websocket"],
-  upgrade: false,
+  // Start with polling then upgrade when possible.
+  // This avoids total failure on hosts/proxies that break raw WebSocket frames.
+  transports: ["polling", "websocket"],
+  upgrade: true,
   reconnection: true,
   reconnectionAttempts: Infinity,
   reconnectionDelay: 1000,
