@@ -387,9 +387,11 @@ export default function HostGame() {
     closeMicPeer();
   };
 
-  const isYoutubeMode = !!gameState.youtubeVideoId;
-  const hasQuizStarted = gameState.status !== 'lobby';
-  const currentTrack = !isYoutubeMode ? gameState.playlist[gameState.currentTrackIndex] : null;
+  const isYoutubeMode = !!gameState?.youtubeVideoId;
+  const hasQuizStarted = gameState?.status !== 'lobby';
+  const currentTrack = (!isYoutubeMode && gameState)
+    ? gameState.playlist[gameState.currentTrackIndex]
+    : null;
   const isYoutubeTrack = !!currentTrack && currentTrack.mediaType === 'youtube' && !!currentTrack.mediaUrl;
   const canHostPlayTrackAudio =
     !!currentTrack?.mediaUrl &&
@@ -400,7 +402,7 @@ export default function HostGame() {
       currentTrack.mediaType === 'video' ||
       currentTrack.mediaType === 'url'
     );
-  const buzzedPlayer = gameState.buzzedPlayerId ? gameState.players[gameState.buzzedPlayerId] : null;
+  const buzzedPlayer = gameState?.buzzedPlayerId ? gameState.players[gameState.buzzedPlayerId] : null;
   const normalizedTrackGain = currentTrack?.mediaType === 'video' ? 0.85 : 1;
 
   const fadeHostAudioTo = useCallback((target: number, durationMs = 220) => {
