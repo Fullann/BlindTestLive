@@ -279,7 +279,7 @@ export default function HostGame() {
         };
 
         pc.ontrack = (e) => {
-          const stream = e.streams[0] ?? e.track && new MediaStream([e.track]);
+          const stream = e.streams[0] ?? (e.track ? new MediaStream([e.track]) : null);
           if (!stream) return;
           // Play audio — pour un MediaStream live, on appelle play() directement
           // sans attendre readyState ou onloadedmetadata (peu fiable sur certains navigateurs)
