@@ -9,6 +9,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { BlindTestSession, Playlist, Track, MediaType } from '../types';
 import { Plus, Trash2, Play, Music, LogOut, Youtube, Edit, Flag, Upload, Mic, Film, Image as ImageIcon, Type, Link, Settings2, Cpu, BookOpen, Trophy, LayoutDashboard, Rocket, Activity, Moon, Sun } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const THEME_PRESETS = [
   'Années 80', 'Années 90', 'Années 2000 FR', 'Films cultes',
@@ -794,7 +795,16 @@ export default function AdminDashboard() {
   };
 
   if (loading) {
-    return <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">Chargement...</div>;
+    return (
+      <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center gap-5">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+          className="w-10 h-10 rounded-full border-2 border-indigo-500/20 border-t-indigo-500"
+        />
+        <p className="text-zinc-500 text-sm tracking-wide">Chargement…</p>
+      </div>
+    );
   }
 
   const activeBlindTests = blindTests.filter((s) => s.status === 'active');
@@ -823,28 +833,45 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-zinc-950 text-white app-shell">
       {/* ── Header ── */}
-      <header className="sticky top-0 z-20 bg-zinc-950/90 backdrop-blur border-b border-white/5 px-6 py-3 flex items-center justify-between">
+      <header className="sticky top-0 z-20 bg-zinc-950/95 backdrop-blur-lg border-b border-white/5 px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center">
-            <Music className="w-4 h-4 text-white" />
+          <div className="relative">
+            <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/25">
+              <Music className="w-4 h-4 text-white" />
+            </div>
+            {activeBlindTests.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-zinc-950 flex items-center justify-center">
+                <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping absolute" />
+              </span>
+            )}
           </div>
-          <div>
-            <span className="font-black text-base tracking-tight">BlindTest<span className="text-indigo-400">Live</span></span>
-            <span className="ml-2 text-xs text-zinc-500">{user?.email}</span>
+          <div className="flex flex-col">
+            <span className="font-black text-base tracking-tight leading-none">BlindTest<span className="text-indigo-400">Live</span></span>
+            <span className="text-[11px] text-zinc-500 mt-0.5 leading-none">{user?.email}</span>
           </div>
+          {activeBlindTests.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="hidden sm:flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/25 rounded-full px-2.5 py-1"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[11px] text-emerald-300 font-semibold">{activeBlindTests.length} en cours</span>
+            </motion.div>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => navigate('/admin/hardware')} className="text-xs text-zinc-500 hover:text-zinc-300 border border-white/10 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-colors">
+        <div className="flex items-center gap-1.5">
+          <button onClick={() => navigate('/admin/hardware')} className="text-xs text-zinc-500 hover:text-zinc-200 hover:bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-all">
             <Cpu className="w-3.5 h-3.5" />Matériel
           </button>
-          <button onClick={() => navigate('/admin/settings')} className="text-xs text-zinc-500 hover:text-zinc-300 border border-white/10 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-colors">
+          <button onClick={() => navigate('/admin/settings')} className="text-xs text-zinc-500 hover:text-zinc-200 hover:bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-all">
             <Settings2 className="w-3.5 h-3.5" />Paramètres
           </button>
-          <button onClick={toggleTheme} className="text-xs text-zinc-500 hover:text-zinc-300 border border-white/10 rounded-lg p-1.5 transition-colors" title="Changer de thème">
+          <button onClick={toggleTheme} className="text-xs text-zinc-500 hover:text-zinc-200 hover:bg-white/5 border border-white/8 rounded-lg p-1.5 transition-all" title="Changer de thème">
             {theme === 'light' ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
           </button>
-          <button onClick={handleLogout} className="text-xs text-zinc-500 hover:text-red-400 border border-white/10 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-colors">
-            <LogOut className="w-3.5 h-3.5" />Déconnexion
+          <button onClick={handleLogout} className="text-xs text-zinc-500 hover:text-red-400 hover:bg-red-500/5 border border-white/8 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-all">
+            <LogOut className="w-3.5 h-3.5" />Déco
           </button>
         </div>
       </header>
@@ -858,11 +885,18 @@ export default function AdminDashboard() {
             { label: 'Sessions terminées', value: finishedBlindTests.length, color: 'text-white' },
             { label: 'Playlists', value: playlists.length, color: 'text-indigo-400' },
             { label: 'Pistes au total', value: totalTracks, color: 'text-white' },
-          ].map((stat) => (
-            <div key={stat.label} className="bg-zinc-900 border border-white/8 rounded-2xl p-4 hover:border-white/15 transition-colors">
+          ].map((stat, index) => (
+            <motion.div
+              key={stat.label}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.03 * index }}
+              whileHover={{ y: -2, scale: 1.01 }}
+              className="bg-zinc-900 border border-white/8 rounded-2xl p-4 hover:border-white/15 transition-colors"
+            >
               <p className="text-[11px] text-zinc-500 uppercase tracking-wider">{stat.label}</p>
               <p className={`text-3xl font-black mt-1 ${stat.color}`}>{stat.value}</p>
-            </div>
+            </motion.div>
           ))}
         </div>
 
@@ -874,13 +908,20 @@ export default function AdminDashboard() {
               onClick={() => setAdminTab(tab.id)}
               className={`relative px-4 py-2 rounded-xl text-sm font-medium transition-all ${
                 adminTab === tab.id
-                  ? 'bg-indigo-600 text-white shadow'
+                  ? 'text-white shadow'
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
               }`}
             >
-              {tab.label}
+              {adminTab === tab.id && (
+                <motion.span
+                  layoutId="admin-tab-active-pill"
+                  className="absolute inset-0 rounded-xl bg-indigo-600"
+                  transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                />
+              )}
+              <span className="relative">{tab.label}</span>
               {tab.badge !== undefined && (
-                <span className="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500 text-white text-[10px] font-bold">
+                <span className="relative ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500 text-white text-[10px] font-bold">
                   {tab.badge}
                 </span>
               )}
@@ -888,56 +929,91 @@ export default function AdminDashboard() {
           ))}
         </div>
 
+        <AnimatePresence mode="wait">
+        <motion.div
+          key={adminTab}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -6 }}
+          transition={{ duration: 0.16, ease: 'easeOut' }}
+        >
         {/* SESSIONS */}
         {adminTab === 'sessions' && (
           <div className="space-y-6">
-            <div className="bg-zinc-900 border border-white/8 rounded-2xl p-6">
+            <div className="bg-zinc-900 border border-white/8 rounded-2xl p-6" style={{ boxShadow: activeBlindTests.length > 0 ? '0 0 40px rgba(52,211,153,0.05)' : 'none' }}>
               <div className="flex items-center justify-between mb-5">
                 <div>
-                  <h2 className="text-lg font-bold flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                  <h2 className="text-lg font-bold flex items-center gap-2.5">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+                    </span>
                     Sessions en cours
+                    {activeBlindTests.length > 0 && (
+                      <span className="bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold px-2 py-0.5 rounded-full">
+                        {activeBlindTests.length}
+                      </span>
+                    )}
                   </h2>
                   <p className="text-xs text-zinc-500 mt-0.5">Parties actuellement actives</p>
                 </div>
-                <button
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.97 }}
                   onClick={() => setAdminTab('lancer')}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-2 transition-colors"
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-2 transition-colors shadow-lg shadow-indigo-500/20"
                 >
                   <Play className="w-4 h-4" />
                   Lancer une partie
-                </button>
+                </motion.button>
               </div>
               {activeBlindTests.length === 0 ? (
-                <div className="text-center py-10 space-y-3">
-                  <Flag className="w-10 h-10 text-zinc-700 mx-auto" />
+                <div className="text-center py-12 space-y-3">
+                  <div className="w-14 h-14 rounded-2xl bg-zinc-800 flex items-center justify-center mx-auto">
+                    <Flag className="w-6 h-6 text-zinc-600" />
+                  </div>
                   <p className="text-zinc-500 text-sm">Aucune partie en cours.</p>
-                  <button onClick={() => setAdminTab('lancer')} className="text-indigo-400 hover:text-indigo-300 text-sm transition-colors">
-                    Lancer une partie →
+                  <button onClick={() => setAdminTab('lancer')} className="text-indigo-400 hover:text-indigo-300 text-sm transition-colors inline-flex items-center gap-1">
+                    Lancer une partie <span>→</span>
                   </button>
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {activeBlindTests.map((session) => (
-                    <div key={session.id} className="bg-zinc-950 border border-emerald-500/20 rounded-xl p-4 flex items-center justify-between">
+                <div className="space-y-2.5">
+                  <AnimatePresence initial={false}>
+                    {activeBlindTests.map((session) => (
+                    <motion.div
+                      key={session.id}
+                      initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -12, scale: 0.98 }}
+                      whileHover={{ y: -2, scale: 1.005 }}
+                      className="bg-zinc-950 border border-emerald-500/25 rounded-xl p-4 flex items-center justify-between transition-all hover:border-emerald-400/50"
+                      style={{ boxShadow: '0 0 20px rgba(52,211,153,0.06)' }}
+                    >
                       <div>
                         <p className="font-semibold">{session.title}</p>
-                        <div className="flex items-center gap-2 mt-0.5">
+                        <div className="flex items-center gap-2 mt-1">
                           <span className="text-xs text-zinc-500">Code:</span>
-                          <code className="text-xs font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">{session.gameId}</code>
+                          <code className="text-xs font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">{session.gameId}</code>
                           <span className="text-xs text-zinc-600">{new Date(session.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <button onClick={() => navigate(`/admin/game/${session.gameId}`)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors">
+                        <motion.button
+                          whileHover={{ scale: 1.03 }}
+                          whileTap={{ scale: 0.97 }}
+                          onClick={() => navigate(`/admin/game/${session.gameId}`)}
+                          className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-colors shadow-md shadow-indigo-500/20"
+                        >
                           Reprendre →
-                        </button>
+                        </motion.button>
                         <button onClick={() => handleEndBlindTest(session)} disabled={endingSessionId === session.id} className="bg-red-600/15 hover:bg-red-600/25 disabled:opacity-50 text-red-400 px-3 py-2 rounded-xl text-xs border border-red-500/20 transition-colors">
                           {endingSessionId === session.id ? 'Arrêt…' : 'Terminer'}
                         </button>
                       </div>
-                    </div>
+                    </motion.div>
                   ))}
+                  </AnimatePresence>
                 </div>
               )}
             </div>
@@ -985,20 +1061,27 @@ export default function AdminDashboard() {
         {/* LANCER */}
         {adminTab === 'lancer' && (
           <div className="space-y-8">
-            <div className="bg-indigo-600/10 border border-indigo-500/30 rounded-2xl p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-wider text-indigo-300 font-semibold">Mode événement</p>
-                <h2 className="text-lg font-bold mt-1">Lancer événement (1 clic)</h2>
-                <p className="text-sm text-indigo-100/80 mt-1">Flux court: playlist → branding → QR live → console animateur en safe mode.</p>
+            <motion.div
+              whileHover={{ scale: 1.005 }}
+              className="relative overflow-hidden bg-gradient-to-br from-indigo-600/15 to-purple-600/10 border border-indigo-500/30 rounded-2xl p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4"
+              style={{ boxShadow: '0 0 40px rgba(99,102,241,0.08)' }}
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-indigo-500/5 to-transparent pointer-events-none" />
+              <div className="relative">
+                <p className="text-xs uppercase tracking-widest text-indigo-300/80 font-bold">Mode événement</p>
+                <h2 className="text-lg font-bold mt-1 text-white">Lancer événement (1 clic)</h2>
+                <p className="text-sm text-indigo-100/70 mt-1">Flux court : playlist → branding → QR live → console en safe mode.</p>
               </div>
-              <button
+              <motion.button
+                whileHover={{ scale: 1.04 }}
+                whileTap={{ scale: 0.96 }}
                 onClick={openEventQuickModal}
-                className="inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors"
+                className="relative shrink-0 inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition-colors shadow-lg shadow-indigo-500/25"
               >
                 <Rocket className="w-4 h-4" />
                 Lancer événement
-              </button>
-            </div>
+              </motion.button>
+            </motion.div>
 
             <div className="bg-zinc-900 border border-white/8 rounded-2xl p-6">
               <div className="flex items-center justify-between mb-2">
@@ -1022,10 +1105,17 @@ export default function AdminDashboard() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
-                  {playlists.map((playlist) => {
+                  {playlists.map((playlist, index) => {
                     const badges = getPlaylistTypeBadge(playlist);
                     return (
-                      <div key={playlist.id} className="bg-zinc-950 border border-white/8 rounded-2xl p-4 flex flex-col gap-3 hover:border-white/15 transition-all">
+                      <motion.div
+                        key={playlist.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.015 * index }}
+                        whileHover={{ y: -3, scale: 1.01 }}
+                        className="bg-zinc-950 border border-white/8 rounded-2xl p-4 flex flex-col gap-3 hover:border-white/15 transition-all"
+                      >
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1 min-w-0">
                             <p className="font-semibold truncate">{playlist.name}</p>
@@ -1045,7 +1135,7 @@ export default function AdminDashboard() {
                             <Play className="w-4 h-4" />Lancer
                           </button>
                         </div>
-                      </div>
+                      </motion.div>
                     );
                   })}
                 </div>
@@ -1255,17 +1345,54 @@ export default function AdminDashboard() {
             </div>
           </div>
         )}
+        </motion.div>
+        </AnimatePresence>
 
         {/* EVENT QUICK MODAL */}
+        <AnimatePresence>
         {showEventQuickModal && (
-          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl bg-zinc-900 border border-white/10 rounded-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+          <motion.div
+            key="eq-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94, y: 24 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+              className="w-full max-w-2xl bg-zinc-900 border border-white/12 rounded-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto shadow-2xl shadow-black/60"
+            >
               <div className="flex items-center justify-between">
-                <h3 className="text-xl font-semibold">Mode événement — lancement guidé</h3>
-                <span className="text-xs text-zinc-500">Étape {eventQuickStep}/3</span>
+                <div>
+                  <h3 className="text-xl font-semibold">Mode événement — lancement guidé</h3>
+                  <div className="flex items-center gap-1.5 mt-2">
+                    {[1,2,3].map((s) => (
+                      <div key={s} className={`h-1 rounded-full transition-all duration-300 ${s <= eventQuickStep ? 'bg-indigo-500 w-8' : 'bg-zinc-700 w-5'}`} />
+                    ))}
+                    <span className="text-xs text-zinc-500 ml-1">Étape {eventQuickStep}/3</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowEventQuickModal(false)}
+                  className="text-zinc-500 hover:text-zinc-300 hover:bg-white/5 w-8 h-8 rounded-lg flex items-center justify-center transition-all text-lg"
+                >
+                  ×
+                </button>
               </div>
+              <AnimatePresence mode="wait">
               {eventQuickStep === 1 && (
-                <div className="space-y-4">
+                <motion.div
+                  key="eq-step-1"
+                  initial={{ opacity: 0, x: 16 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -16 }}
+                  transition={{ duration: 0.18 }}
+                  className="space-y-4"
+                >
                   <p className="text-sm text-zinc-400">Choisis la playlist à lancer.</p>
                   <select
                     value={eventQuickPlaylistId}
@@ -1280,19 +1407,28 @@ export default function AdminDashboard() {
                     ))}
                   </select>
                   <div className="flex justify-end gap-3">
-                    <button onClick={() => setShowEventQuickModal(false)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm">Annuler</button>
-                    <button
+                    <button onClick={() => setShowEventQuickModal(false)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm transition-colors">Annuler</button>
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.97 }}
                       onClick={() => setEventQuickStep(2)}
                       disabled={!eventQuickPlaylistId}
-                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 px-5 py-2 rounded-xl text-sm font-semibold"
+                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-5 py-2 rounded-xl text-sm font-semibold transition-colors"
                     >
-                      Continuer
-                    </button>
+                      Continuer →
+                    </motion.button>
                   </div>
-                </div>
+                </motion.div>
               )}
               {eventQuickStep === 2 && (
-                <div className="space-y-4">
+                <motion.div
+                  key="eq-step-2"
+                  initial={{ opacity: 0, x: 16 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -16 }}
+                  transition={{ duration: 0.18 }}
+                  className="space-y-4"
+                >
                   <p className="text-sm text-zinc-400">Configure le branding à appliquer automatiquement.</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <input
@@ -1300,14 +1436,14 @@ export default function AdminDashboard() {
                       value={eventQuickBranding.clientName}
                       onChange={(e) => setEventQuickBranding((prev) => ({ ...prev, clientName: e.target.value }))}
                       placeholder="Nom client / événement"
-                      className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm"
+                      className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500/50 transition-colors"
                     />
                     <input
                       type="text"
                       value={eventQuickBranding.logoUrl}
                       onChange={(e) => setEventQuickBranding((prev) => ({ ...prev, logoUrl: e.target.value }))}
                       placeholder="URL logo (optionnel)"
-                      className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm"
+                      className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500/50 transition-colors"
                     />
                     <label className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm flex items-center justify-between">
                       Couleur primaire
@@ -1327,48 +1463,95 @@ export default function AdminDashboard() {
                     </label>
                   </div>
                   <div className="flex justify-end gap-3">
-                    <button onClick={() => setEventQuickStep(1)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm">Retour</button>
-                    <button
+                    <button onClick={() => setEventQuickStep(1)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm transition-colors">← Retour</button>
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.97 }}
                       onClick={() => void handlePrepareEventQuick()}
                       disabled={eventQuickBusy}
-                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 px-5 py-2 rounded-xl text-sm font-semibold"
+                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-5 py-2 rounded-xl text-sm font-semibold transition-colors"
                     >
-                      {eventQuickBusy ? 'Préparation…' : 'Préparer QR live'}
-                    </button>
+                      {eventQuickBusy ? (
+                        <span className="flex items-center gap-2">
+                          <motion.span animate={{ rotate: 360 }} transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 rounded-full border border-white/30 border-t-white inline-block" />
+                          Préparation…
+                        </span>
+                      ) : 'Préparer QR live'}
+                    </motion.button>
                   </div>
-                </div>
+                </motion.div>
               )}
               {eventQuickStep === 3 && eventQuickCreated && (
-                <div className="space-y-4">
-                  <p className="text-sm text-zinc-400">La session est créée. Le QR est prêt, puis ouvre la console animateur en mode sécurisé.</p>
-                  <div className="bg-zinc-950 border border-white/10 rounded-xl p-4 flex flex-col items-center gap-3">
-                    <QRCodeSVG value={eventQuickCreated.joinUrl} size={180} />
+                <motion.div
+                  key="eq-step-3"
+                  initial={{ opacity: 0, scale: 0.97 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.22 }}
+                  className="space-y-4"
+                >
+                  <div className="flex items-center gap-2 text-emerald-400">
+                    <div className="w-5 h-5 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-xs">✓</div>
+                    <p className="text-sm font-medium">Session créée — QR prêt !</p>
+                  </div>
+                  <div className="bg-zinc-950 border border-white/10 rounded-2xl p-5 flex flex-col items-center gap-4">
+                    <div className="p-3 bg-white rounded-xl">
+                      <QRCodeSVG value={eventQuickCreated.joinUrl} size={160} />
+                    </div>
                     <p className="text-xs text-zinc-500 text-center break-all">{eventQuickCreated.joinUrl}</p>
-                    <a href={eventQuickCreated.screenUrl} target="_blank" rel="noreferrer" className="text-indigo-300 hover:text-indigo-200 text-sm">
-                      Ouvrir l'écran public
+                    <a href={eventQuickCreated.screenUrl} target="_blank" rel="noreferrer" className="text-indigo-300 hover:text-indigo-200 text-sm underline underline-offset-2 transition-colors">
+                      Ouvrir l'écran public →
                     </a>
                   </div>
                   <div className="flex justify-end gap-3">
-                    <button onClick={() => setShowEventQuickModal(false)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm">Fermer</button>
-                    <button
+                    <button onClick={() => setShowEventQuickModal(false)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm transition-colors">Fermer</button>
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.97 }}
                       onClick={() => navigate(`/admin/game/${eventQuickCreated.gameId}?safe=1`)}
-                      className="bg-emerald-600 hover:bg-emerald-500 px-5 py-2 rounded-xl text-sm font-semibold"
+                      className="bg-emerald-600 hover:bg-emerald-500 px-5 py-2 rounded-xl text-sm font-semibold transition-colors"
                     >
-                      Démarrer (safe mode)
-                    </button>
+                      Démarrer (safe mode) →
+                    </motion.button>
                   </div>
-                </div>
+                </motion.div>
               )}
-            </div>
-          </div>
+              </AnimatePresence>
+            </motion.div>
+          </motion.div>
         )}
+        </AnimatePresence>
 
         {/* LAUNCH MODAL */}
+        <AnimatePresence>
         {showLaunchModal && (
-          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl bg-zinc-900 border border-white/10 rounded-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-              <h3 className="text-xl font-semibold">Options de lancement</h3>
-              <p className="text-sm text-zinc-400">Configure cette partie. Ces options s'appliquent uniquement à ce lancement.</p>
+          <motion.div
+            key="launch-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.94, y: 24 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 12 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+            className="w-full max-w-2xl bg-zinc-900 border border-white/12 rounded-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl shadow-black/60"
+          >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-semibold">Options de lancement</h3>
+                  <p className="text-sm text-zinc-400 mt-0.5">Configure cette partie — uniquement pour ce lancement.</p>
+                </div>
+                <button
+                  onClick={() => { setShowLaunchModal(false); setPendingPlaylistLaunch(null); setPendingYoutubeLaunch(null); }}
+                  className="text-zinc-500 hover:text-zinc-300 hover:bg-white/5 w-8 h-8 rounded-lg flex items-center justify-center transition-all text-lg"
+                >
+                  ×
+                </button>
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 text-sm space-y-2">
@@ -1424,12 +1607,21 @@ export default function AdminDashboard() {
               )}
 
               <div className="flex justify-end gap-3 pt-2">
-                <button onClick={() => { setShowLaunchModal(false); setPendingPlaylistLaunch(null); setPendingYoutubeLaunch(null); }} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm">Annuler</button>
-                <button onClick={handleLaunchWithOptions} className="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-xl text-sm font-semibold">Lancer la partie</button>
+                <button onClick={() => { setShowLaunchModal(false); setPendingPlaylistLaunch(null); setPendingYoutubeLaunch(null); }} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm transition-colors">Annuler</button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={handleLaunchWithOptions}
+                  className="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center gap-2"
+                >
+                  <Play className="w-4 h-4" />
+                  Lancer la partie
+                </motion.button>
               </div>
-            </div>
-          </div>
+          </motion.div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
     </div>
   );

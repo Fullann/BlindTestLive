@@ -2,11 +2,12 @@ import { useState, useEffect, useRef, DragEvent, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { socket } from '../lib/socket';
 import { GameState, Player, Track } from '../types';
-import { Play, Pause, SkipForward, Check, X, Users, Music, Trophy, MonitorUp, Copy, Unlock, UserMinus, Flag, ArrowLeft, Download, ArrowUp, ArrowDown, FileText, Cpu, Plus, Trash2, Mic, MicOff, Volume2 } from 'lucide-react';
+import { Play, Pause, SkipForward, Check, X, Users, Music, Trophy, MonitorUp, Copy, Unlock, UserMinus, Flag, ArrowLeft, Download, ArrowUp, ArrowDown, FileText, Cpu, Plus, Trash2, Mic, MicOff, Volume2, Shuffle } from 'lucide-react';
 import clsx from 'clsx';
 import YouTube from 'react-youtube';
 import { api } from '../api';
 import { useToast } from '../context/ToastContext';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
@@ -61,35 +62,54 @@ const Timer = ({ gameState, duration, strictMode, onTimeUp }: { gameState: GameS
   const rm = String(Math.floor(remainingSec / 60)).padStart(2, '0');
   const rs = String(remainingSec % 60).padStart(2, '0');
 
+  const pct = strictMode && duration ? Math.min(100, (remainingSec / duration) * 100) : Math.min(100, (elapsedSec % 60) * (100 / 60));
+  const isUrgent = strictMode && remainingSec <= 5 && remainingSec > 0;
+
   return (
-    <div className="mt-6 w-full">
+    <div className="mt-5 w-full">
       {strictMode && typeof duration === 'number' && duration > 0 ? (
         <>
-          <div className="flex justify-between text-zinc-400 mb-2 font-mono text-sm">
-            <span>00:00</span>
-            <span className={remainingSec <= 5 ? 'text-red-500 font-bold animate-pulse' : ''}>
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-xs text-zinc-500 font-mono">Temps restant</span>
+            <motion.span
+              key={remainingSec}
+              initial={{ scale: 1.1 }}
+              animate={{ scale: 1 }}
+              transition={{ duration: 0.12 }}
+              className={clsx(
+                'font-mono font-black text-sm tabular-nums',
+                isUrgent ? 'text-red-400' : remainingSec <= 10 ? 'text-amber-400' : 'text-zinc-200',
+              )}
+            >
               {rm}:{rs}
-            </span>
+            </motion.span>
           </div>
-          <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
-            <div
-              className={`h-full transition-all duration-100 ${remainingSec <= 5 ? 'bg-red-500' : 'bg-indigo-500'}`}
-              style={{ width: `${Math.min(100, (remainingSec / duration) * 100)}%` }}
+          <div className="h-2.5 bg-zinc-800 rounded-full overflow-hidden">
+            <motion.div
+              className={clsx(
+                'h-full rounded-full transition-colors duration-300',
+                isUrgent ? 'bg-gradient-to-r from-red-500 to-red-400' :
+                remainingSec <= 10 ? 'bg-gradient-to-r from-amber-500 to-amber-400' :
+                'bg-gradient-to-r from-indigo-500 to-indigo-400',
+              )}
+              style={{ width: `${pct}%` }}
+              animate={isUrgent ? { opacity: [1, 0.6, 1] } : { opacity: 1 }}
+              transition={isUrgent ? { duration: 0.6, repeat: Infinity } : { duration: 0.1 }}
             />
           </div>
         </>
       ) : (
         <>
-          <div className="flex justify-between text-zinc-400 mb-2 font-mono text-sm">
-            <span>Temps écoulé</span>
-            <span className="text-emerald-400 font-bold">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-xs text-zinc-500 font-mono">Temps écoulé</span>
+            <span className="text-emerald-400 font-mono font-bold text-sm tabular-nums">
               {mm}:{ss}
             </span>
           </div>
-          <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+          <div className="h-2.5 bg-zinc-800 rounded-full overflow-hidden">
             <div
-              className="h-full bg-emerald-500/70 transition-all duration-100"
-              style={{ width: `${Math.min(100, (elapsedSec % 60) * (100 / 60))}%` }}
+              className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 rounded-full transition-all duration-100"
+              style={{ width: `${pct}%` }}
             />
           </div>
         </>
@@ -489,7 +509,16 @@ export default function HostGame() {
   ]);
 
   if (!gameState) {
-    return <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">Chargement...</div>;
+    return (
+      <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center gap-5">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+          className="w-10 h-10 rounded-full border-2 border-indigo-500/20 border-t-indigo-500"
+        />
+        <p className="text-zinc-500 text-sm tracking-wide">Connexion à la partie…</p>
+      </div>
+    );
   }
 
   const handleStartTrack = () => {
@@ -672,6 +701,16 @@ export default function HostGame() {
       if (!response?.success) {
         toastError(response?.error || "Impossible de réorganiser la file.");
       }
+    });
+  };
+
+  const handleShuffleUpcomingTracks = () => {
+    socket.emit('host:shuffleUpcomingTracks', { gameId, hostToken }, (response: any) => {
+      if (!response?.success) {
+        toastError(response?.error || "Impossible de mélanger les questions.");
+        return;
+      }
+      toastSuccess(`${response?.shuffledCount || 0} question(s) mélangée(s).`);
     });
   };
 
@@ -1016,41 +1055,52 @@ export default function HostGame() {
   return (
     <div className="min-h-screen bg-zinc-950 text-white app-shell">
       {/* Sticky Header */}
-      <header className="sticky top-0 z-40 bg-zinc-950/90 backdrop-blur-md border-b border-white/5 px-6 py-3">
+      <header className="sticky top-0 z-40 bg-zinc-950/95 backdrop-blur-lg border-b border-white/5 px-6 py-3">
         <div className="max-w-7xl mx-auto flex items-center gap-4">
           <button
             onClick={() => navigate('/admin')}
-            className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-white/10 transition-colors shrink-0"
+            className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-white/10 transition-all hover:border-white/20 shrink-0"
             title="Retour au dashboard"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-2.5 min-w-0">
             <div className="min-w-0">
-              <p className="text-[10px] text-zinc-500 uppercase tracking-wider leading-none">Partie</p>
-              <p className="font-mono text-indigo-400 text-lg font-bold leading-tight truncate">{gameState.id}</p>
+              <p className="text-[10px] text-zinc-600 uppercase tracking-widest leading-none">Partie en cours</p>
+              <p className="font-mono text-indigo-400 text-base font-bold leading-tight truncate">{gameState.id}</p>
             </div>
-            <span className={clsx(
-              'px-2.5 py-1 rounded-full text-xs font-semibold border shrink-0',
+            <AnimatePresence mode="wait">
+            <motion.span
+              key={gameState.status}
+              initial={{ scale: 0.85, opacity: 0, y: -4 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 4 }}
+              transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+              className={clsx(
+              'px-3 py-1 rounded-full text-xs font-bold border shrink-0 flex items-center gap-1.5',
               gameState.status === 'lobby' && 'bg-yellow-500/10 border-yellow-500/30 text-yellow-300',
               gameState.status === 'onboarding' && 'bg-fuchsia-500/10 border-fuchsia-500/30 text-fuchsia-300',
-              gameState.status === 'countdown' && 'bg-indigo-500/10 border-indigo-500/30 text-indigo-300',
-              gameState.status === 'playing' && 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300',
-              gameState.status === 'paused' && 'bg-red-500/10 border-red-500/30 text-red-300',
-              gameState.status === 'revealed' && 'bg-blue-500/10 border-blue-500/30 text-blue-300',
+              gameState.status === 'countdown' && 'bg-indigo-500/15 border-indigo-500/40 text-indigo-200',
+              gameState.status === 'playing' && 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200',
+              gameState.status === 'paused' && 'bg-orange-500/15 border-orange-500/40 text-orange-200',
+              gameState.status === 'revealed' && 'bg-blue-500/15 border-blue-500/40 text-blue-200',
               gameState.status === 'finished' && 'bg-purple-500/10 border-purple-500/30 text-purple-300',
             )}>
+              {gameState.status === 'playing' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+              {gameState.status === 'paused' && <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />}
+              {gameState.status === 'countdown' && <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping" />}
               {gameState.status === 'lobby' && 'En attente'}
               {gameState.status === 'onboarding' && `Onboarding (${gameState.countdown || gameState.tutorialSeconds || 10}s)`}
-              {gameState.status === 'countdown' && `Décompte\u2026 ${gameState.countdown}`}
+              {gameState.status === 'countdown' && `Décompte ${gameState.countdown}…`}
               {gameState.status === 'playing' && 'En cours'}
-              {gameState.status === 'paused' && 'Buzzé !'}
+              {gameState.status === 'paused' && '⚡ Buzzé !'}
               {gameState.status === 'revealed' && 'Réponse révélée'}
               {gameState.status === 'finished' && 'Terminé'}
-            </span>
+            </motion.span>
+            </AnimatePresence>
             {!isYoutubeMode && (
-              <span className="hidden md:inline text-xs text-zinc-500 shrink-0">
-                Piste {gameState.currentTrackIndex + 1}/{gameState.playlist.length}
+              <span className="hidden md:inline text-xs text-zinc-600 shrink-0 font-mono">
+                {gameState.currentTrackIndex + 1}<span className="text-zinc-700">/{gameState.playlist.length}</span>
               </span>
             )}
           </div>
@@ -1127,19 +1177,73 @@ export default function HostGame() {
         <div className="lg:col-span-2 space-y-6">
 
           {/* Buzzed Player Alert */}
+          <AnimatePresence>
           {hasQuizStarted && gameState.status === 'paused' && buzzedPlayer && (
-            <div
-              className="p-6 rounded-2xl border-2 flex flex-col gap-4"
-              style={{ borderColor: buzzedPlayer.color, backgroundColor: `${buzzedPlayer.color}15` }}
+            <motion.div
+              initial={{ opacity: 0, y: -20, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -12, scale: 0.97 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 28 }}
+              className="relative p-6 rounded-2xl border-2 flex flex-col gap-4 overflow-hidden"
+              style={{
+                borderColor: buzzedPlayer.color,
+                backgroundColor: `${buzzedPlayer.color}10`,
+                boxShadow: `0 0 50px ${buzzedPlayer.color}30, 0 0 100px ${buzzedPlayer.color}12, inset 0 0 80px ${buzzedPlayer.color}06`,
+              }}
             >
-              <div className="flex items-center justify-between">
+              {/* animated background glow pulse */}
+              <motion.div
+                className="absolute inset-0 rounded-2xl pointer-events-none"
+                animate={{ opacity: [0.4, 0.8, 0.4] }}
+                transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+                style={{ background: `radial-gradient(ellipse at 70% 50%, ${buzzedPlayer.color}14, transparent 70%)` }}
+              />
+              <div className="flex items-center justify-between relative z-10">
                 <div>
-                  <p className="text-sm uppercase tracking-wider font-bold animate-pulse" style={{ color: buzzedPlayer.color }}>A buzzé !</p>
-                  <h3 className="text-4xl font-bold mt-1">{buzzedPlayer.name}</h3>
+                  <motion.p
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.06 }}
+                    className="text-sm uppercase tracking-widest font-black"
+                    style={{ color: buzzedPlayer.color }}
+                  >
+                    ⚡ A buzzé !
+                  </motion.p>
+                  <motion.h3
+                    initial={{ opacity: 0, x: -14 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.1 }}
+                    className="text-5xl font-black mt-1 tracking-tight"
+                  >
+                    {buzzedPlayer.name}
+                  </motion.h3>
+                  {gameState.buzzTimestamp && gameState.trackStartTime && (
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.2 }}
+                      className="text-xs mt-1.5 font-mono"
+                      style={{ color: `${buzzedPlayer.color}90` }}
+                    >
+                      {((gameState.buzzTimestamp - gameState.trackStartTime) / 1000).toFixed(2)}s après le début
+                    </motion.p>
+                  )}
                 </div>
-                <div className="w-14 h-14 rounded-full animate-pulse" style={{ backgroundColor: buzzedPlayer.color }} />
+                <motion.div
+                  animate={{ scale: [1, 1.1, 1] }}
+                  transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+                  className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-black relative"
+                  style={{
+                    backgroundColor: `${buzzedPlayer.color}25`,
+                    border: `2px solid ${buzzedPlayer.color}60`,
+                    boxShadow: `0 0 20px ${buzzedPlayer.color}50`,
+                    color: buzzedPlayer.color,
+                  }}
+                >
+                  {buzzedPlayer.name.charAt(0).toUpperCase()}
+                </motion.div>
               </div>
-              <div className="flex items-center gap-3 pt-2 border-t border-white/10">
+              <div className="flex items-center gap-3 pt-3 border-t relative z-10" style={{ borderColor: `${buzzedPlayer.color}25` }}>
                 {micActivePlayerId === buzzedPlayer.id ? (
                   <div className="flex-1 flex items-center gap-3">
                     <div className="flex items-center gap-2 flex-1">
@@ -1160,19 +1264,25 @@ export default function HostGame() {
                 ) : (
                   <button
                     onClick={() => handleRequestPlayerMic(buzzedPlayer.id)}
-                    className="flex items-center gap-2 bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-600/30 text-sm font-medium px-4 py-2 rounded-xl transition-colors"
+                    className="flex items-center gap-2 bg-zinc-900/80 border border-white/10 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 text-sm font-medium px-4 py-2 rounded-xl transition-colors"
                   >
                     <Mic className="w-4 h-4" />
                     Tu ne l&apos;entends pas ? Activer son micro
                   </button>
                 )}
               </div>
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
 
           {/* Track Control */}
           {!hasQuizStarted ? (
-            <div className="bg-zinc-900 rounded-2xl border border-white/5 p-8">
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.22 }}
+              className="bg-zinc-900 rounded-2xl border border-white/5 p-8"
+            >
               <p className="text-xs uppercase tracking-wider text-indigo-400 font-semibold mb-2">Lobby</p>
               <h2 className="text-2xl font-bold mb-2">Prêt à démarrer</h2>
               <p className="text-zinc-400 mb-6">Organise les joueurs et lance le quiz quand tu es prêt.</p>
@@ -1183,14 +1293,35 @@ export default function HostGame() {
                 <Play className="w-6 h-6" />
                 {isYoutubeMode ? 'Démarrer le quiz YouTube' : 'Lancer le quiz'}
               </button>
-            </div>
+            </motion.div>
           ) : (
-            <div className="bg-zinc-900 rounded-2xl border border-white/5 p-6 relative overflow-hidden">
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.22 }}
+              className={clsx(
+                'bg-zinc-900 rounded-2xl border p-6 relative overflow-hidden transition-colors duration-500',
+                gameState.status === 'playing' && 'border-emerald-500/20',
+                gameState.status === 'paused' && 'border-orange-500/25',
+                gameState.status === 'revealed' && 'border-blue-500/20',
+                gameState.status === 'countdown' && 'border-indigo-500/25',
+                !['playing', 'paused', 'revealed', 'countdown'].includes(gameState.status) && 'border-white/5',
+              )}
+              style={{
+                boxShadow:
+                  gameState.status === 'playing' ? '0 0 35px rgba(52,211,153,0.07)' :
+                  gameState.status === 'paused' ? '0 0 35px rgba(251,146,60,0.09)' :
+                  gameState.status === 'revealed' ? '0 0 35px rgba(96,165,250,0.07)' :
+                  gameState.status === 'countdown' ? '0 0 35px rgba(99,102,241,0.09)' :
+                  'none',
+              }}
+            >
               {!isYoutubeMode && (
                 <div className="absolute top-0 left-0 w-full h-1 bg-white/5">
-                  <div
-                    className="h-full bg-indigo-500 transition-all duration-500"
+                  <motion.div
+                    className="h-full bg-gradient-to-r from-indigo-500 to-indigo-400 rounded-full"
                     style={{ width: `${(gameState.currentTrackIndex / Math.max(1, gameState.playlist.length)) * 100}%` }}
+                    transition={{ duration: 0.5, ease: 'easeOut' }}
                   />
                 </div>
               )}
@@ -1212,21 +1343,49 @@ export default function HostGame() {
                   </>
                 ) : (
                   <>
+                    <AnimatePresence mode="wait">
                     {gameState.status === 'revealed' || gameState.status === 'finished' ? (
-                      <>
-                        <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-1">Réponse</p>
-                        <h2 className="text-4xl font-bold mb-1">{currentTrack?.title}</h2>
-                        <p className="text-2xl text-zinc-400">{currentTrack?.artist}</p>
-                      </>
+                      <motion.div
+                        key="revealed"
+                        initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.22 }}
+                      >
+                        <p className="text-xs text-blue-400 uppercase tracking-widest font-bold mb-1.5">✓ Réponse révélée</p>
+                        <h2 className="text-4xl font-black mb-1 tracking-tight">{currentTrack?.title}</h2>
+                        <p className="text-2xl text-zinc-400 font-medium">{currentTrack?.artist}</p>
+                      </motion.div>
                     ) : (
-                      <div className="flex items-center gap-4 text-zinc-600">
-                        <Music className="w-12 h-12" />
-                        <div>
-                          <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-1">Question en cours</p>
-                          <h2 className="text-3xl font-bold italic text-zinc-500">Titre masqué</h2>
+                      <motion.div
+                        key="hidden"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.18 }}
+                        className="flex items-center gap-4"
+                      >
+                        <div className={clsx(
+                          'w-14 h-14 rounded-2xl flex items-center justify-center transition-colors',
+                          gameState.status === 'playing' ? 'bg-emerald-500/15 text-emerald-400' :
+                          gameState.status === 'paused' ? 'bg-orange-500/15 text-orange-400' :
+                          'bg-zinc-800 text-zinc-600',
+                        )}>
+                          <Music className={clsx('w-7 h-7', gameState.status === 'playing' && 'animate-pulse')} />
                         </div>
-                      </div>
+                        <div>
+                          <p className="text-xs text-zinc-500 uppercase tracking-widest font-bold mb-1">Question en cours</p>
+                          <h2 className="text-2xl font-bold text-zinc-500 italic">Titre masqué</h2>
+                          {gameState.status === 'playing' && (
+                            <p className="text-xs text-emerald-500/70 mt-0.5">Musique en cours de lecture…</p>
+                          )}
+                          {gameState.status === 'paused' && (
+                            <p className="text-xs text-orange-500/70 mt-0.5">En attente de la réponse…</p>
+                          )}
+                        </div>
+                      </motion.div>
                     )}
+                    </AnimatePresence>
                     {(gameState.status === 'playing' || gameState.status === 'paused') && gameState.trackStartTime && (
                       <Timer
                         gameState={gameState}
@@ -1304,60 +1463,83 @@ export default function HostGame() {
                 </div>
               )}
               {/* Controls */}
-              <div className="flex items-center gap-3">
+              <AnimatePresence mode="wait">
+              <motion.div
+                key={gameState.status}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.16 }}
+                className="flex items-center gap-3"
+              >
                 {gameState.status === 'lobby' || gameState.status === 'revealed' ? (
-                  <button
+                  <motion.button
+                    whileHover={{ scale: 1.015 }}
+                    whileTap={{ scale: 0.975 }}
                     onClick={handleStartTrack}
-                    className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-4 rounded-xl flex items-center justify-center gap-3 font-semibold text-lg transition-colors"
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-4 rounded-xl flex items-center justify-center gap-3 font-bold text-lg transition-colors shadow-lg shadow-emerald-500/20"
                   >
                     <Play className="w-6 h-6" />
                     {isYoutubeMode ? (gameState.status === 'lobby' ? 'Démarrer' : 'Reprendre') : 'Lancer la musique'}
-                  </button>
+                  </motion.button>
                 ) : gameState.status === 'countdown' ? (
-                  <button
-                    disabled
-                    className="flex-1 bg-indigo-600/50 text-white py-4 rounded-xl flex items-center justify-center gap-3 font-semibold text-lg cursor-not-allowed"
-                  >
-                    Préparation\u2026
-                  </button>
+                  <div className="flex-1 bg-indigo-600/20 border border-indigo-500/30 text-indigo-200 py-4 rounded-xl flex items-center justify-center gap-3 font-semibold text-lg cursor-not-allowed">
+                    <motion.span
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                      className="w-5 h-5 rounded-full border-2 border-indigo-300/30 border-t-indigo-300 inline-block"
+                    />
+                    Préparation…
+                  </div>
                 ) : gameState.status === 'playing' ? (
-                  <button
+                  <motion.button
+                    whileHover={{ scale: 1.015 }}
+                    whileTap={{ scale: 0.975 }}
                     onClick={isYoutubeMode ? handleResumeYoutube : handleRevealAnswer}
-                    className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-xl flex items-center justify-center gap-3 font-semibold text-lg transition-colors"
+                    className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-xl flex items-center justify-center gap-3 font-bold text-lg transition-colors shadow-lg shadow-blue-500/15"
                   >
                     {isYoutubeMode ? <Pause className="w-6 h-6" /> : <Check className="w-6 h-6" />}
                     {isYoutubeMode ? 'Pause' : 'Révéler la réponse'}
-                  </button>
+                  </motion.button>
                 ) : gameState.status === 'paused' && buzzedPlayer ? (
                   <div className="flex-1 grid grid-cols-2 gap-3">
-                    <button
+                    <motion.button
+                      whileHover={{ scale: 1.03 }}
+                      whileTap={{ scale: 0.96 }}
                       onClick={() => handleAwardPoints(buzzedPlayer.id)}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white py-4 rounded-xl flex items-center justify-center gap-2 font-semibold transition-colors"
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white py-5 rounded-xl flex items-center justify-center gap-2 font-bold text-base transition-colors shadow-xl shadow-emerald-500/25"
+                      style={{ boxShadow: '0 8px 32px rgba(52,211,153,0.25)' }}
                     >
-                      <Check className="w-5 h-5" />
+                      <Check className="w-6 h-6" />
                       {gameState.enableBonuses ? 'Correct (bonus)' : 'Bonne réponse'}
-                    </button>
-                    <button
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.03 }}
+                      whileTap={{ scale: 0.96 }}
                       onClick={() => handlePenalize(buzzedPlayer.id)}
-                      className="bg-red-600 hover:bg-red-500 text-white py-4 rounded-xl flex items-center justify-center gap-2 font-semibold transition-colors"
+                      className="bg-red-600 hover:bg-red-500 text-white py-5 rounded-xl flex items-center justify-center gap-2 font-bold text-base transition-colors"
+                      style={{ boxShadow: '0 8px 32px rgba(239,68,68,0.20)' }}
                     >
-                      <X className="w-5 h-5" />
+                      <X className="w-6 h-6" />
                       Mauvaise réponse
-                    </button>
+                    </motion.button>
                   </div>
                 ) : null}
                 {!isYoutubeMode && (
-                  <button
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.94 }}
                     onClick={handleNextTrack}
                     disabled={gameState.currentTrackIndex >= gameState.playlist.length - 1}
-                    className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-white p-4 rounded-xl transition-colors"
+                    className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed text-white p-4 rounded-xl transition-colors border border-white/5"
                     title="Piste suivante"
                   >
                     <SkipForward className="w-6 h-6" />
-                  </button>
+                  </motion.button>
                 )}
-              </div>
-            </div>
+              </motion.div>
+              </AnimatePresence>
+            </motion.div>
           )}
 
           {/* Text Answers */}
@@ -1419,12 +1601,22 @@ export default function HostGame() {
               {hostRole === 'owner' && (
                 <div className="mb-3 flex flex-wrap gap-2">
                   {!draftMode ? (
-                    <button
-                      onClick={initDraftMode}
-                      className="bg-zinc-800 hover:bg-zinc-700 border border-white/10 px-3 py-1.5 rounded-lg text-xs"
-                    >
-                      Mode brouillon
-                    </button>
+                    <>
+                      <button
+                        onClick={initDraftMode}
+                        className="bg-zinc-800 hover:bg-zinc-700 border border-white/10 px-3 py-1.5 rounded-lg text-xs"
+                      >
+                        Mode brouillon
+                      </button>
+                      <button
+                        onClick={handleShuffleUpcomingTracks}
+                        disabled={gameState.currentTrackIndex >= gameState.playlist.length - 2}
+                        className="bg-indigo-600/25 hover:bg-indigo-600/35 border border-indigo-500/30 disabled:opacity-40 px-3 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
+                      >
+                        <Shuffle className="w-3.5 h-3.5" />
+                        Aléatoire
+                      </button>
+                    </>
                   ) : (
                     <>
                       <button onClick={publishDraftTracks} className="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded-lg text-xs font-medium">Publier</button>
@@ -1772,10 +1964,15 @@ export default function HostGame() {
 
           {/* Players */}
           <div className="bg-zinc-900 rounded-2xl border border-white/5 p-6">
-            <h2 className="text-base font-semibold flex items-center gap-2 mb-4">
-              <Users className="w-4 h-4 text-indigo-400" />
-              Joueurs ({Object.keys(gameState.players).length})
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-semibold flex items-center gap-2">
+                <Users className="w-4 h-4 text-indigo-400" />
+                Joueurs
+              </h2>
+              <span className="bg-zinc-800 border border-white/8 text-zinc-300 text-xs font-bold px-2 py-0.5 rounded-full">
+                {Object.keys(gameState.players).length}
+              </span>
+            </div>
 
             {gameState.isTeamMode && (
               <div className="mb-4 space-y-2">
@@ -1824,15 +2021,25 @@ export default function HostGame() {
             )}
 
             <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
+              <AnimatePresence initial={false}>
               {(Object.values(gameState.players) as Player[])
                 .sort((a, b) => b.score - a.score)
-                .map((player) => (
-                  <div
+                .map((player, rankIdx) => (
+                  <motion.div
                     key={player.id}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 10, scale: 0.97 }}
+                    transition={{ duration: 0.18 }}
+                    layout
                     className={clsx(
                       'p-3 rounded-xl flex items-center justify-between border transition-all',
-                      player.lockedOut ? 'border-red-500/40 bg-red-500/10 opacity-60' : 'border-white/5 bg-zinc-950'
+                      player.id === gameState.buzzedPlayerId ? 'border-orange-500/40 bg-orange-500/8' :
+                      player.lockedOut ? 'border-red-500/40 bg-red-500/10 opacity-60' : 'border-white/5 bg-zinc-950',
                     )}
+                    style={player.id === gameState.buzzedPlayerId ? {
+                      boxShadow: `0 0 16px ${player.color}30`,
+                    } : undefined}
                   >
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
                       <div
@@ -1897,10 +2104,16 @@ export default function HostGame() {
                         </div>
                       )}
                     </div>
-                  </div>
+                  </motion.div>
                 ))}
+              </AnimatePresence>
               {Object.keys(gameState.players).length === 0 && (
-                <p className="text-zinc-500 text-center py-6 text-sm">En attente de joueurs&hellip;</p>
+                <div className="text-center py-8">
+                  <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center mx-auto mb-3">
+                    <Users className="w-5 h-5 text-zinc-600" />
+                  </div>
+                  <p className="text-zinc-500 text-sm">En attente de joueurs…</p>
+                </div>
               )}
             </div>
           </div>
@@ -1908,25 +2121,25 @@ export default function HostGame() {
           {/* Stats */}
           <div className="bg-zinc-900 rounded-2xl border border-white/5 p-6">
             <h2 className="text-base font-semibold flex items-center gap-2 mb-4">
-              <Trophy className="w-4 h-4 text-yellow-500" />
+              <Trophy className="w-4 h-4 text-amber-400" />
               Stats de la partie
             </h2>
             <div className="grid grid-cols-2 gap-2 mb-4">
               <div className="bg-zinc-950 border border-white/5 rounded-xl p-3">
-                <p className="text-xs text-zinc-500 mb-1">Buzz totaux</p>
-                <p className="text-xl font-bold">{totalBuzzes}</p>
+                <p className="text-[10px] text-zinc-500 uppercase tracking-wide mb-1">Buzz</p>
+                <p className="text-2xl font-black">{totalBuzzes}</p>
               </div>
-              <div className="bg-zinc-950 border border-white/5 rounded-xl p-3">
-                <p className="text-xs text-zinc-500 mb-1">Taux de réussite</p>
-                <p className="text-xl font-bold text-emerald-400">{buzzRate}%</p>
+              <div className="bg-emerald-500/5 border border-emerald-500/15 rounded-xl p-3">
+                <p className="text-[10px] text-zinc-500 uppercase tracking-wide mb-1">Réussite</p>
+                <p className="text-2xl font-black text-emerald-400">{buzzRate}%</p>
               </div>
-              <div className="bg-zinc-950 border border-white/5 rounded-xl p-3">
-                <p className="text-xs text-zinc-500 mb-1">Bonnes rép.</p>
-                <p className="text-xl font-bold text-emerald-400">{totalCorrect}</p>
+              <div className="bg-zinc-950 border border-emerald-500/10 rounded-xl p-3">
+                <p className="text-[10px] text-zinc-500 uppercase tracking-wide mb-1">Corrects</p>
+                <p className="text-2xl font-black text-emerald-400">{totalCorrect}</p>
               </div>
-              <div className="bg-zinc-950 border border-white/5 rounded-xl p-3">
-                <p className="text-xs text-zinc-500 mb-1">Erreurs</p>
-                <p className="text-xl font-bold text-red-400">{totalWrong}</p>
+              <div className="bg-zinc-950 border border-red-500/10 rounded-xl p-3">
+                <p className="text-[10px] text-zinc-500 uppercase tracking-wide mb-1">Erreurs</p>
+                <p className="text-2xl font-black text-red-400">{totalWrong}</p>
               </div>
             </div>
             {topMissedPlayers.length > 0 && (

@@ -15,6 +15,11 @@ const hostReorderTrackSchema = z.object({
   toIndex: z.number().int().min(0).max(999),
 });
 
+const hostShuffleUpcomingTracksSchema = z.object({
+  gameId: z.string().min(1).max(10),
+  hostToken: z.string().min(10).max(200),
+});
+
 const hostUpdateTrackSchema = z.object({
   gameId: z.string().min(1).max(10),
   hostToken: z.string().min(10).max(200),
@@ -843,6 +848,42 @@ export function registerHostHandlers(ctx: SocketHandlerContext) {
     ctx.persistGame(game);
     ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
     callback({ success: true });
+  });
+
+  socket.on("host:shuffleUpcomingTracks", (rawPayload, callback: Ack) => {
+    const parsed = hostShuffleUpcomingTracksSchema.safeParse(rawPayload);
+    if (!parsed.success) {
+      return callback({ success: false, error: "Payload invalide" });
+    }
+
+    const { gameId, hostToken } = parsed.data;
+    const game = ctx.activeGames[gameId];
+    const role = game ? ctx.getHostRole(game, hostToken) : null;
+    if (!game || !ctx.hasPermission(role, "control")) {
+      return callback({ success: false, error: "Permission refusée" });
+    }
+    if (!Array.isArray(game.playlist) || game.playlist.length <= 1) {
+      return callback({ success: false, error: "Playlist insuffisante" });
+    }
+
+    const startIndex = Math.max(0, game.currentTrackIndex + 1);
+    if (startIndex >= game.playlist.length - 1) {
+      return callback({ success: false, error: "Pas assez de questions à mélanger" });
+    }
+
+    const currentAndPast = game.playlist.slice(0, startIndex);
+    const upcoming = game.playlist.slice(startIndex);
+    for (let i = upcoming.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [upcoming[i], upcoming[j]] = [upcoming[j], upcoming[i]];
+    }
+    game.playlist = [...currentAndPast, ...upcoming];
+    game.lastActivity = Date.now();
+
+    logEvent(game, ctx, gameId, "playlist_shuffle", `Questions à venir mélangées (${upcoming.length})`);
+    ctx.persistGame(game);
+    ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
+    callback({ success: true, shuffledCount: upcoming.length });
   });
 
   socket.on("host:updateTrack", (rawPayload, callback: Ack) => {
