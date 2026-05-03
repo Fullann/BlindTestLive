@@ -23,6 +23,7 @@ import blindtestsRouter from "./server/routes/blindtests";
 import hardwareRouter from "./server/routes/hardware";
 import eventsRouter from "./server/routes/events";
 import playerProfilesRouter from "./server/routes/player-profiles";
+import { redactAuditPayload } from "./server/redactSecrets";
 
 const PORT = Number(process.env.PORT || 5174);
 const DATA_DIR = path.resolve(process.cwd(), "data");
@@ -75,11 +76,12 @@ let dbPool: any = null;
 function auditLog(event: string, data: Record<string, unknown>) {
   metrics.eventsTotal += 1;
   if (event === "game:created") metrics.gamesCreated += 1;
+  const safe = redactAuditPayload(data);
   console.info(
     JSON.stringify({
       ts: new Date().toISOString(),
       event,
-      ...data,
+      ...safe,
     }),
   );
 }

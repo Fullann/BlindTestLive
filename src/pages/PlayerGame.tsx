@@ -6,6 +6,8 @@ import { useToast } from '../context/ToastContext';
 import { api } from '../api';
 import { motion } from 'framer-motion';
 import clsx from 'clsx';
+import { describeWebRtcConnectionClosed, formatMicErrorToast } from '../lib/micWebRtcHints';
+import type { GamePingAck, GameRequestStateResult, PlayerJoinGameAck } from '../types/socket-events';
 
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
@@ -80,6 +82,7 @@ export default function PlayerGame() {
   const [micError, setMicError] = useState('');
   const playerPeerRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const micTargetHostSocketIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!gameId) return;
@@ -132,12 +135,17 @@ export default function PlayerGame() {
         publicId,
         name: savedName,
         team: savedTeam || undefined
-      }, (res: any) => {
+      }, (res: PlayerJoinGameAck) => {
         if (!res.success) {
           navigate('/');
           return;
         }
-        socket.emit('game:requestState', { gameId, playerId, playerSecret }, () => {});
+        socket.emit('game:requestState', { gameId, playerId, playerSecret }, (st: GameRequestStateResult) => {
+          if (st.success && st.state) {
+            setGameState(st.state);
+            if (st.state.players[playerId]) setPlayer(st.state.players[playerId]);
+          }
+        });
       });
     };
 
@@ -150,6 +158,16 @@ export default function PlayerGame() {
     socket.on('player:forceLogout', handleForcedQuit);
 
     // ── WebRTC mic: host requests mic ──────────────────────────────────────
+    const stopMicSession = (opts?: { clearError?: boolean }) => {
+      localStreamRef.current?.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+      playerPeerRef.current?.close();
+      playerPeerRef.current = null;
+      micTargetHostSocketIdRef.current = null;
+      setMicActive(false);
+      if (opts?.clearError !== false) setMicError('');
+    };
+
     const startMicSession = async () => {
       setMicError('');
       try {
@@ -163,35 +181,63 @@ export default function PlayerGame() {
 
         pc.onicecandidate = (e) => {
           if (e.candidate) {
-            socket.emit('player:micIceCandidate', { gameId, playerId, candidate: e.candidate }, () => {});
+            socket.emit(
+              'player:micIceCandidate',
+              {
+                gameId,
+                playerId,
+                candidate: e.candidate,
+                targetHostSocketId: micTargetHostSocketIdRef.current || undefined,
+              },
+              () => {},
+            );
           }
         };
 
         pc.onconnectionstatechange = () => {
           if (pc.connectionState === 'connected') setMicActive(true);
-          if (['disconnected', 'closed', 'failed'].includes(pc.connectionState)) stopMicSession();
+          if (['disconnected', 'closed', 'failed'].includes(pc.connectionState)) {
+            if (pc.connectionState === 'failed') {
+              const msg = describeWebRtcConnectionClosed('failed');
+              stopMicSession({ clearError: false });
+              setMicError(msg);
+              toastError(msg);
+            } else {
+              stopMicSession();
+            }
+          }
         };
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        socket.emit('player:micOffer', { gameId, playerId, sdp: pc.localDescription }, () => {});
+        socket.emit(
+          'player:micOffer',
+          {
+            gameId,
+            playerId,
+            sdp: pc.localDescription,
+            targetHostSocketId: micTargetHostSocketIdRef.current || undefined,
+          },
+          (ack: any) => {
+            if (ack?.success === false) {
+              const msg = typeof ack.error === 'string' ? ack.error : 'Le micro n’a pas pu joindre la régie.';
+              stopMicSession({ clearError: false });
+              setMicError(msg);
+              toastError(msg);
+            }
+          },
+        );
         setMicActive(true);
-      } catch (err: any) {
-        setMicError(err.name === 'NotAllowedError' ? 'Accès micro refusé' : 'Impossible d\'activer le micro');
+      } catch (err: unknown) {
+        const msg = formatMicErrorToast(err);
+        setMicError(msg);
+        toastError(msg);
         setMicActive(false);
       }
     };
 
-    const stopMicSession = () => {
-      localStreamRef.current?.getTracks().forEach((t) => t.stop());
-      localStreamRef.current = null;
-      playerPeerRef.current?.close();
-      playerPeerRef.current = null;
-      setMicActive(false);
-      setMicError('');
-    };
-
-    const handleRequestPlayerMic = () => {
+    const handleHostRequestMic = (payload?: { hostSocketId?: string }) => {
+      if (payload?.hostSocketId) micTargetHostSocketIdRef.current = payload.hostSocketId;
       void startMicSession();
     };
 
@@ -204,11 +250,12 @@ export default function PlayerGame() {
     };
 
     const handleMicStop = () => {
+      const target = micTargetHostSocketIdRef.current || undefined;
+      socket.emit('player:micStopped', { gameId, playerId, targetHostSocketId: target }, () => {});
       stopMicSession();
-      socket.emit('player:micStopped', { gameId, playerId }, () => {});
     };
 
-    socket.on('host:requestPlayerMic', handleRequestPlayerMic);
+    socket.on('host:requestPlayerMic', handleHostRequestMic);
     socket.on('player:micAnswer', handleMicAnswer);
     socket.on('player:micIceCandidate', handleMicIceCandidate);
     socket.on('player:micStop', handleMicStop);
@@ -224,7 +271,7 @@ export default function PlayerGame() {
       socket.off('player:kicked', handleForcedQuit);
       socket.off('player:forceLogout', handleForcedQuit);
       socket.off('connect', joinGame);
-      socket.off('host:requestPlayerMic', handleRequestPlayerMic);
+      socket.off('host:requestPlayerMic', handleHostRequestMic);
       socket.off('player:micAnswer', handleMicAnswer);
       socket.off('player:micIceCandidate', handleMicIceCandidate);
       socket.off('player:micStop', handleMicStop);
@@ -237,7 +284,7 @@ export default function PlayerGame() {
     let active = true;
     const measure = () => {
       const startedAt = performance.now();
-      socket.emit('game:check', gameId, () => {
+      socket.emit('game:ping', (_ack: GamePingAck) => {
         if (!active) return;
         setPingMs(Math.round(Math.max(0, performance.now() - startedAt)));
       });

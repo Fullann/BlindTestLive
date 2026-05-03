@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { z } from "zod";
 import { Track } from "../../src/types";
 import { Ack, ServerGameState, SocketHandlerContext } from "./context";
+import { emitLobbyMetaToWatchers } from "./game-state";
 
 const hostJoinSchema = z.object({
   gameId: z.string().min(1).max(10),
@@ -148,11 +149,27 @@ const hostTestDeviceLedSchema = z.object({
   pattern: z.enum(["success", "error", "blink"]).optional(),
 });
 
+/** Même périmètre que les champs sanitizés dans host:appendRoundTracks (pas de z.any()). */
+const hostAppendRoundTrackSchema = z.object({
+  id: z.string().max(50).optional(),
+  title: z.string().max(100).optional(),
+  artist: z.string().max(100).optional(),
+  duration: z.number().optional(),
+  mediaType: z.string().max(20).optional(),
+  mediaUrl: z.string().max(1000).optional(),
+  textContent: z.string().max(2000).optional(),
+  startTime: z.number().optional(),
+  url: z.string().max(500).optional(),
+  visualHint: z.string().max(500).optional(),
+  imageRevealMode: z.enum(["none", "blur"]).optional(),
+  imageRevealDuration: z.number().int().min(1).max(300).optional(),
+});
+
 const hostAppendRoundSchema = z.object({
   gameId: z.string().min(1).max(10),
   hostToken: z.string().min(10).max(200),
   name: z.string().min(1).max(64),
-  tracks: z.array(z.any()).min(1).max(200),
+  tracks: z.array(hostAppendRoundTrackSchema).min(1).max(200),
 });
 
 const hostSetRoundTextModeSchema = z.object({
@@ -320,50 +337,47 @@ function startCountdown(ctx: SocketHandlerContext, gameId: string, game: ServerG
 }
 
 
-function parseCreateOptions(rawOptions: unknown) {
-  if (typeof rawOptions === "boolean") {
-    return {
-      isTeamMode: rawOptions,
-      shuffleQuestions: false,
-      difficulty: "medium" as const,
-      theme: "dark" as const,
-      enableBonuses: true,
-      onboardingEnabled: true,
-      tutorialSeconds: 10,
-      tournamentMode: false,
-      strictTimerEnabled: false,
-      rules: {
-        wrongAnswerPenalty: -1,
-        progressiveLock: true,
-        progressiveLockBaseMs: 5000,
-        antiSpamPenalty: -1,
-      },
-      teamConfig: DEFAULT_TEAM_CONFIG,
-    };
-  }
-  const parsed = hostCreateOptionsSchema.safeParse(rawOptions || {});
-  if (!parsed.success) {
-    return {
-      isTeamMode: false,
-      shuffleQuestions: false,
-      difficulty: "medium" as const,
-      theme: "dark" as const,
-      enableBonuses: true,
-      onboardingEnabled: true,
-      tutorialSeconds: 10,
-      tournamentMode: false,
-      strictTimerEnabled: false,
-      rules: {
-        wrongAnswerPenalty: -1,
-        progressiveLock: true,
-        progressiveLockBaseMs: 5000,
-        antiSpamPenalty: -1,
-      },
-      teamConfig: DEFAULT_TEAM_CONFIG,
-    };
-  }
+type ParsedHostCreateOptions = {
+  isTeamMode: boolean;
+  shuffleQuestions: boolean;
+  difficulty: "easy" | "medium" | "hard";
+  theme: "dark" | "neon" | "retro" | "minimal";
+  enableBonuses: boolean;
+  onboardingEnabled: boolean;
+  tutorialSeconds: number;
+  tournamentMode: boolean;
+  strictTimerEnabled: boolean;
+  rules: {
+    wrongAnswerPenalty: number;
+    progressiveLock: boolean;
+    progressiveLockBaseMs: number;
+    antiSpamPenalty: number;
+  };
+  teamConfig: Array<{ id: string; name: string; color: string; enabled: boolean }>;
+};
+
+const DEFAULT_CREATE_OPTIONS: ParsedHostCreateOptions = {
+  isTeamMode: false,
+  shuffleQuestions: false,
+  difficulty: "medium",
+  theme: "dark",
+  enableBonuses: true,
+  onboardingEnabled: true,
+  tutorialSeconds: 10,
+  tournamentMode: false,
+  strictTimerEnabled: false,
+  rules: {
+    wrongAnswerPenalty: -1,
+    progressiveLock: true,
+    progressiveLockBaseMs: 5000,
+    antiSpamPenalty: -1,
+  },
+  teamConfig: DEFAULT_TEAM_CONFIG,
+};
+
+function mapCreateOptionsFromZod(data: z.infer<typeof hostCreateOptionsSchema>): ParsedHostCreateOptions {
   const safeTeams =
-    parsed.data.teamConfig?.map((team) => ({
+    data.teamConfig?.map((team) => ({
       id: String(team.id).trim().substring(0, 32),
       name: String(team.name).trim().substring(0, 32),
       color: String(team.color).trim().substring(0, 32),
@@ -371,23 +385,49 @@ function parseCreateOptions(rawOptions: unknown) {
     })) || DEFAULT_TEAM_CONFIG;
 
   return {
-    isTeamMode: parsed.data.isTeamMode ?? false,
-    shuffleQuestions: parsed.data.shuffleQuestions ?? false,
-    difficulty: parsed.data.difficulty ?? "medium",
-    theme: parsed.data.theme ?? "dark",
-    enableBonuses: parsed.data.enableBonuses ?? true,
-    onboardingEnabled: parsed.data.onboardingEnabled ?? true,
-    tutorialSeconds: parsed.data.tutorialSeconds ?? 10,
-    tournamentMode: parsed.data.tournamentMode ?? false,
-    strictTimerEnabled: parsed.data.strictTimerEnabled ?? false,
+    isTeamMode: data.isTeamMode ?? false,
+    shuffleQuestions: data.shuffleQuestions ?? false,
+    difficulty: data.difficulty ?? "medium",
+    theme: data.theme ?? "dark",
+    enableBonuses: data.enableBonuses ?? true,
+    onboardingEnabled: data.onboardingEnabled ?? true,
+    tutorialSeconds: data.tutorialSeconds ?? 10,
+    tournamentMode: data.tournamentMode ?? false,
+    strictTimerEnabled: data.strictTimerEnabled ?? false,
     rules: {
-      wrongAnswerPenalty: parsed.data.rules?.wrongAnswerPenalty ?? -1,
-      progressiveLock: parsed.data.rules?.progressiveLock ?? true,
-      progressiveLockBaseMs: parsed.data.rules?.progressiveLockBaseMs ?? 5000,
-      antiSpamPenalty: parsed.data.rules?.antiSpamPenalty ?? -1,
+      wrongAnswerPenalty: data.rules?.wrongAnswerPenalty ?? -1,
+      progressiveLock: data.rules?.progressiveLock ?? true,
+      progressiveLockBaseMs: data.rules?.progressiveLockBaseMs ?? 5000,
+      antiSpamPenalty: data.rules?.antiSpamPenalty ?? -1,
     },
     teamConfig: safeTeams.length > 0 ? safeTeams : DEFAULT_TEAM_CONFIG,
   };
+}
+
+/** Options de création : legacy boolean, défauts si absent, ou objet validé strictement (shuffle, règles, etc.). */
+function parseHostCreateOptions(rawOptions: unknown): { ok: true; options: ParsedHostCreateOptions } | { ok: false; error: string } {
+  if (rawOptions === undefined || rawOptions === null) {
+    return { ok: true, options: { ...DEFAULT_CREATE_OPTIONS, teamConfig: [...DEFAULT_TEAM_CONFIG] } };
+  }
+  if (typeof rawOptions === "boolean") {
+    return {
+      ok: true,
+      options: {
+        ...DEFAULT_CREATE_OPTIONS,
+        isTeamMode: rawOptions,
+        shuffleQuestions: false,
+        teamConfig: [...DEFAULT_TEAM_CONFIG],
+      },
+    };
+  }
+  if (typeof rawOptions !== "object" || Array.isArray(rawOptions)) {
+    return { ok: false, error: "Options de partie invalides" };
+  }
+  const parsed = hostCreateOptionsSchema.safeParse(rawOptions);
+  if (!parsed.success) {
+    return { ok: false, error: "Options de partie invalides" };
+  }
+  return { ok: true, options: mapCreateOptionsFromZod(parsed.data) };
 }
 
 export function registerHostHandlers(ctx: SocketHandlerContext) {
@@ -401,7 +441,11 @@ export function registerHostHandlers(ctx: SocketHandlerContext) {
     if (!Array.isArray(playlist) || playlist.length === 0 || playlist.length > 200) {
       return callback({ success: false, error: "Playlist invalide (max 200 pistes)." });
     }
-    const options = parseCreateOptions(rawOptions);
+    const parsedOpts = parseHostCreateOptions(rawOptions);
+    if (parsedOpts.ok === false) {
+      return callback({ success: false, error: parsedOpts.error });
+    }
+    const options = parsedOpts.options;
     const defaultTrackDuration = getDefaultDurationForDifficulty(options.difficulty);
 
     const sanitizedPlaylist = playlist.map((t) => ({
@@ -474,7 +518,11 @@ export function registerHostHandlers(ctx: SocketHandlerContext) {
     if (typeof youtubeId !== "string" || !/^[\w-]{11}$/.test(youtubeId)) {
       return callback({ success: false, error: "ID YouTube invalide." });
     }
-    const options = parseCreateOptions(rawOptions);
+    const parsedOpts = parseHostCreateOptions(rawOptions);
+    if (parsedOpts.ok === false) {
+      return callback({ success: false, error: parsedOpts.error });
+    }
+    const options = parsedOpts.options;
     let code = ctx.generateGameCode();
     while (ctx.activeGames[code]) code = ctx.generateGameCode();
 
@@ -873,17 +921,14 @@ export function registerHostHandlers(ctx: SocketHandlerContext) {
 
     const currentAndPast = game.playlist.slice(0, startIndex);
     const upcoming = game.playlist.slice(startIndex);
-    for (let i = upcoming.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [upcoming[i], upcoming[j]] = [upcoming[j], upcoming[i]];
-    }
-    game.playlist = [...currentAndPast, ...upcoming];
+    const shuffled = ctx.shuffleArray(upcoming);
+    game.playlist = [...currentAndPast, ...shuffled];
     game.lastActivity = Date.now();
 
-    logEvent(game, ctx, gameId, "playlist_shuffle", `Questions à venir mélangées (${upcoming.length})`);
+    logEvent(game, ctx, gameId, "playlist_shuffle", `Questions à venir mélangées (${shuffled.length})`);
     ctx.persistGame(game);
     ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
-    callback({ success: true, shuffledCount: upcoming.length });
+    callback({ success: true, shuffledCount: shuffled.length });
   });
 
   socket.on("host:updateTrack", (rawPayload, callback: Ack) => {
@@ -1082,6 +1127,7 @@ export function registerHostHandlers(ctx: SocketHandlerContext) {
     logEvent(game, ctx, gameId, "team_added", `Equipe ajoutée: ${teamName}`);
     ctx.persistGame(game);
     ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
+    emitLobbyMetaToWatchers(ctx.io, gameId, game);
     callback({ success: true, teamId });
   });
 
@@ -1107,6 +1153,7 @@ export function registerHostHandlers(ctx: SocketHandlerContext) {
     logEvent(game, ctx, gameId, "team_removed", `Equipe supprimée: ${team.name}`);
     ctx.persistGame(game);
     ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
+    emitLobbyMetaToWatchers(ctx.io, gameId, game);
     callback({ success: true });
   });
 
@@ -1284,7 +1331,7 @@ export function registerHostHandlers(ctx: SocketHandlerContext) {
     if (game.youtubeVideoId) return callback({ success: false, error: "Mode YouTube non compatible" });
 
     const defaultTrackDuration = game.defaultTrackDuration || 20;
-    const sanitizedTracks: Track[] = tracks.map((t: any) => ({
+    const sanitizedTracks: Track[] = tracks.map((t) => ({
       id: String(t.id || crypto.randomUUID()).substring(0, 50),
       title: String(t.title || "Titre").substring(0, 100),
       artist: String(t.artist || "").substring(0, 100),

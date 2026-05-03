@@ -1,13 +1,21 @@
-import { useState, useEffect, useRef, DragEvent, useCallback } from 'react';
+import { useState, useEffect, useRef, DragEvent, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { socket } from '../lib/socket';
 import { GameState, Player, Track } from '../types';
-import { Play, Pause, SkipForward, Check, X, Users, Music, Trophy, MonitorUp, Copy, Unlock, UserMinus, Flag, ArrowLeft, Download, ArrowUp, ArrowDown, FileText, Cpu, Plus, Trash2, Mic, MicOff, Volume2, Shuffle } from 'lucide-react';
+import { Play, Pause, SkipForward, Check, X, Users, Music, Trophy, MonitorUp, Copy, Flag, ArrowLeft, Download, ArrowUp, ArrowDown, FileText, Cpu, Plus, Trash2, Mic, MicOff, Volume2, Shuffle } from 'lucide-react';
 import clsx from 'clsx';
 import YouTube from 'react-youtube';
 import { api } from '../api';
 import { useToast } from '../context/ToastContext';
 import { motion, AnimatePresence } from 'framer-motion';
+import { formatAudioAutoplayToast } from '../lib/micWebRtcHints';
+import {
+  VirtualScrollArea,
+  VIRTUAL_PLAYLIST_MIN_ITEMS,
+  VIRTUAL_PLAYERS_MIN_ITEMS,
+  PLAYERS_MOTION_MAX,
+} from '../components/ui/VirtualScrollArea';
+import { HostGamePlayerCard } from '../components/host-game/HostGamePlayerCard';
 
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
@@ -254,7 +262,9 @@ export default function HostGame() {
       }
       setHostRole(response.role === 'cohost' ? 'cohost' : 'owner');
       setMySocketId(socket.id || null);
-      socket.emit('game:requestState', { gameId, hostToken }, () => {});
+      socket.emit('game:requestState', { gameId, hostToken }, (res: any) => {
+        if (res?.success && res.state) setGameState(res.state);
+      });
     });
     joinAsHost();
     socket.on('connect', joinAsHost);
@@ -308,7 +318,7 @@ export default function HostGame() {
             audioRef.current.muted = false;
             audioRef.current.volume = 1;
             audioRef.current.play().catch(() => {
-              toastError("Audio micro bloqué par le navigateur. Clique n'importe où puis réessaie.");
+              toastError(formatAudioAutoplayToast());
             });
           }
           // Volume analyser
@@ -1024,6 +1034,10 @@ export default function HostGame() {
   };
 
   const playersList = Object.values(gameState.players) as Player[];
+  const playersSortedByScore = useMemo(
+    () => [...playersList].sort((a, b) => b.score - a.score),
+    [playersList],
+  );
   const totalBuzzes = playersList.reduce((acc, current) => acc + (current.stats?.buzzes || 0), 0);
   const totalCorrect = playersList.reduce((acc, current) => acc + (current.stats?.correctAnswers || 0), 0);
   const totalWrong = playersList.reduce((acc, current) => acc + (current.stats?.wrongAnswers || 0), 0);
@@ -1688,6 +1702,68 @@ export default function HostGame() {
                     Ajouter une question
                   </button>
                 </div>
+              ) : gameState.playlist.length >= VIRTUAL_PLAYLIST_MIN_ITEMS ? (
+                <VirtualScrollArea
+                  count={gameState.playlist.length}
+                  estimateSize={hostRole === 'owner' ? 112 : 76}
+                  maxHeight="18rem"
+                  className="pr-1"
+                  listLabel="File des questions de la partie"
+                  getItemKey={(index) => gameState.playlist[index]?.id ?? `idx-${index}`}
+                >
+                  {(virtualRow) => {
+                    const index = virtualRow.index;
+                    const track = gameState.playlist[index];
+                    if (!track) return null;
+                    const isCurrent = index === gameState.currentTrackIndex;
+                    const isUpcoming = index > gameState.currentTrackIndex && gameState.status !== 'finished';
+                    const canEditTrack =
+                      hostRole === 'owner' &&
+                      gameState.status !== 'finished' &&
+                      !(isCurrent && (gameState.status === 'countdown' || gameState.status === 'playing' || gameState.status === 'paused'));
+                    const draft = getTrackDraft(track);
+                    return (
+                      <div className="pb-2 box-border">
+                        <div
+                          className={clsx(
+                            'rounded-xl border px-3 py-2 flex items-center justify-between gap-3 transition-all',
+                            isCurrent ? 'border-indigo-500/40 bg-indigo-500/10' : index > gameState.currentTrackIndex ? 'border-white/10 bg-zinc-950' : 'border-white/5 bg-zinc-950/40 opacity-60',
+                          )}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs text-zinc-500 mb-0.5">
+                              #{index + 1} {isCurrent ? '• En cours' : index > gameState.currentTrackIndex ? '• À venir' : '• Joué'}
+                            </p>
+                            {canEditTrack ? (
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                <input value={draft.title} onChange={(e) => setTrackDraftField(track.id, 'title', e.target.value)} className="bg-zinc-900 border border-white/10 rounded px-2 py-1 text-sm" placeholder="Titre" />
+                                <input value={draft.artist} onChange={(e) => setTrackDraftField(track.id, 'artist', e.target.value)} className="bg-zinc-900 border border-white/10 rounded px-2 py-1 text-sm" placeholder="Artiste" />
+                                <input type="number" min={1} max={300} value={draft.duration} onChange={(e) => setTrackDraftField(track.id, 'duration', e.target.value)} className="bg-zinc-900 border border-white/10 rounded px-2 py-1 text-sm" placeholder="Durée" />
+                              </div>
+                            ) : (
+                              <>
+                                <p className="text-sm font-medium truncate">{track.title || 'Titre masqué'}</p>
+                                <p className="text-xs text-zinc-400 truncate">{track.artist || 'Artiste inconnu'}</p>
+                              </>
+                            )}
+                          </div>
+                          {isUpcoming && (
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button type="button" onClick={() => handleReorderTrack(index, index - 1)} disabled={index === gameState.currentTrackIndex + 1} className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 p-1.5 rounded-lg" title="Monter"><ArrowUp className="w-3.5 h-3.5" /></button>
+                              <button type="button" onClick={() => handleReorderTrack(index, index + 1)} disabled={index >= gameState.playlist.length - 1} className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 p-1.5 rounded-lg" title="Descendre"><ArrowDown className="w-3.5 h-3.5" /></button>
+                              {canEditTrack && (
+                                <>
+                                  <button type="button" onClick={() => handleSaveTrack(index, track)} className="bg-emerald-600 hover:bg-emerald-500 p-1.5 rounded-lg" title="Sauvegarder"><Check className="w-3.5 h-3.5" /></button>
+                                  <button type="button" onClick={() => handleDeleteTrack(index)} className="bg-red-600 hover:bg-red-500 p-1.5 rounded-lg" title="Supprimer"><Trash2 className="w-3.5 h-3.5" /></button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }}
+                </VirtualScrollArea>
               ) : (
                 <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
                   {gameState.playlist.map((track, index) => {
@@ -2020,99 +2096,88 @@ export default function HostGame() {
               </div>
             )}
 
-            <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
-              <AnimatePresence initial={false}>
-              {(Object.values(gameState.players) as Player[])
-                .sort((a, b) => b.score - a.score)
-                .map((player, rankIdx) => (
-                  <motion.div
-                    key={player.id}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 10, scale: 0.97 }}
-                    transition={{ duration: 0.18 }}
-                    layout
-                    className={clsx(
-                      'p-3 rounded-xl flex items-center justify-between border transition-all',
-                      player.id === gameState.buzzedPlayerId ? 'border-orange-500/40 bg-orange-500/8' :
-                      player.lockedOut ? 'border-red-500/40 bg-red-500/10 opacity-60' : 'border-white/5 bg-zinc-950',
-                    )}
-                    style={player.id === gameState.buzzedPlayerId ? {
-                      boxShadow: `0 0 16px ${player.color}30`,
-                    } : undefined}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      <div
-                        className="w-3 h-3 rounded-full shrink-0"
-                        style={{ backgroundColor: gameState.isTeamMode && player.team ? getTeamColor(player.team) : player.color }}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium truncate">{player.name}</p>
-                        {gameState.isTeamMode && player.team && (
-                          <p className="text-xs text-zinc-500">Équipe {getTeamName(player.team)}</p>
-                        )}
-                        {gameState.isTeamMode && hostRole === 'owner' && !isSafeMode && (
-                          <select
-                            value={player.team || ''}
-                            onChange={(e) => handleAssignPlayerTeam(player.id, e.target.value)}
-                            className="mt-1 bg-zinc-900 border border-white/10 rounded px-1.5 py-0.5 text-xs"
-                          >
-                            <option value="">Aucune équipe</option>
-                            {(gameState.teamConfig || []).filter((t) => t.enabled).map((t) => (
-                              <option key={t.id} value={t.id}>{t.name}</option>
-                            ))}
-                          </select>
-                        )}
-                        {hostRole === 'owner' && !isSafeMode && (
-                          <div className="mt-1 flex items-center gap-1">
-                            <button onClick={() => handleApplyEventPower('x2', player.id)} className="text-[9px] bg-zinc-800 hover:bg-zinc-700 px-1.5 py-0.5 rounded">x2</button>
-                            <button onClick={() => handleApplyEventPower('freeze', player.id)} className="text-[9px] bg-zinc-800 hover:bg-zinc-700 px-1.5 py-0.5 rounded">Freeze</button>
-                            <button onClick={() => handleApplyEventPower('comeback', player.id)} className="text-[9px] bg-zinc-800 hover:bg-zinc-700 px-1.5 py-0.5 rounded">Comeback</button>
-                          </div>
-                        )}
-                      </div>
-                      {player.lockedOut && (
-                        <div className="flex items-center gap-1 shrink-0">
-                          <span className="text-xs text-red-400 font-bold">Bloqué</span>
-                          <button onClick={() => handleUnlockPlayer(player.id)} className="bg-zinc-800 hover:bg-zinc-700 p-1 rounded" title="Débloquer">
-                            <Unlock className="w-3 h-3" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0 ml-2">
-                      <span className="font-mono font-bold text-sm">{player.score}</span>
-                      {hostRole === 'owner' && !isSafeMode && (
-                        <div className="relative">
-                          {playerToKick === player.id ? (
-                            <div className="absolute right-0 top-full mt-1 bg-zinc-800 p-3 rounded-xl border border-white/10 shadow-xl z-50 w-40">
-                              <p className="text-xs mb-2 text-center">Exclure {player.name} ?</p>
-                              <div className="flex gap-1.5">
-                                <button onClick={() => handleKickPlayer(player.id)} className="flex-1 bg-red-600 hover:bg-red-500 text-white px-2 py-1 rounded text-xs">Oui</button>
-                                <button onClick={() => setPlayerToKick(null)} className="flex-1 bg-zinc-700 hover:bg-zinc-600 text-white px-2 py-1 rounded text-xs">Non</button>
-                              </div>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => setPlayerToKick(player.id)}
-                              className="text-zinc-600 hover:text-red-400 p-1 rounded transition-colors"
-                              title="Exclure"
-                            >
-                              <UserMinus className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-              {Object.keys(gameState.players).length === 0 && (
+            <div className="max-h-[480px] pr-1">
+              {playersSortedByScore.length === 0 ? (
                 <div className="text-center py-8">
                   <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center mx-auto mb-3">
                     <Users className="w-5 h-5 text-zinc-600" />
                   </div>
                   <p className="text-zinc-500 text-sm">En attente de joueurs…</p>
+                </div>
+              ) : playersSortedByScore.length >= VIRTUAL_PLAYERS_MIN_ITEMS ? (
+                <VirtualScrollArea
+                  count={playersSortedByScore.length}
+                  estimateSize={hostRole === 'owner' && !isSafeMode ? 124 : 92}
+                  maxHeight="480px"
+                  className="pr-1"
+                  listLabel="Joueurs et scores"
+                  getItemKey={(i) => playersSortedByScore[i]?.id ?? `p-${i}`}
+                >
+                  {(vr) => {
+                    const player = playersSortedByScore[vr.index];
+                    if (!player) return null;
+                    return (
+                      <div className="pb-2 box-border">
+                        <HostGamePlayerCard
+                          player={player}
+                          gameState={gameState}
+                          hostRole={hostRole}
+                          isSafeMode={isSafeMode}
+                          playerToKick={playerToKick}
+                          setPlayerToKick={setPlayerToKick}
+                          onAssignTeam={handleAssignPlayerTeam}
+                          onApplyPower={handleApplyEventPower}
+                          onUnlock={handleUnlockPlayer}
+                          onKick={handleKickPlayer}
+                        />
+                      </div>
+                    );
+                  }}
+                </VirtualScrollArea>
+              ) : playersSortedByScore.length <= PLAYERS_MOTION_MAX ? (
+                <div className="space-y-2 max-h-[480px] overflow-y-auto">
+                  <AnimatePresence initial={false}>
+                    {playersSortedByScore.map((player) => (
+                      <motion.div
+                        key={player.id}
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 10, scale: 0.97 }}
+                        transition={{ duration: 0.18 }}
+                      >
+                        <HostGamePlayerCard
+                          player={player}
+                          gameState={gameState}
+                          hostRole={hostRole}
+                          isSafeMode={isSafeMode}
+                          playerToKick={playerToKick}
+                          setPlayerToKick={setPlayerToKick}
+                          onAssignTeam={handleAssignPlayerTeam}
+                          onApplyPower={handleApplyEventPower}
+                          onUnlock={handleUnlockPlayer}
+                          onKick={handleKickPlayer}
+                        />
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[480px] overflow-y-auto">
+                  {playersSortedByScore.map((player) => (
+                    <HostGamePlayerCard
+                      key={player.id}
+                      player={player}
+                      gameState={gameState}
+                      hostRole={hostRole}
+                      isSafeMode={isSafeMode}
+                      playerToKick={playerToKick}
+                      setPlayerToKick={setPlayerToKick}
+                      onAssignTeam={handleAssignPlayerTeam}
+                      onApplyPower={handleApplyEventPower}
+                      onUnlock={handleUnlockPlayer}
+                      onKick={handleKickPlayer}
+                    />
+                  ))}
                 </div>
               )}
             </div>

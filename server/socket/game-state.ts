@@ -1,7 +1,28 @@
 import { z } from "zod";
-import { Ack, SocketHandlerContext } from "./context";
+import { Server } from "socket.io";
+import { Ack, ServerGameState, SocketHandlerContext } from "./context";
 
 const gameIdSchema = z.string().min(1).max(10);
+
+const lobbyGameIdSchema = z.object({
+  gameId: z.string().min(1).max(10),
+});
+
+/** Room pour les joueurs qui consultent le code (avant player:joinGame) */
+export function lobbyWatchRoomId(gameId: string): string {
+  return `lobby:${gameId}`;
+}
+
+export function emitLobbyMetaToWatchers(io: Server, gameId: string, game: ServerGameState): void {
+  io.to(lobbyWatchRoomId(gameId)).emit("game:lobbyMeta", {
+    gameId,
+    status: game.status,
+    isTeamMode: Boolean(game.isTeamMode),
+    enableBonuses: game.enableBonuses ?? true,
+    teamConfig: game.teamConfig || [],
+  });
+}
+
 const requestStateSchema = z.object({
   gameId: z.string().min(1).max(10),
   playerId: z.string().min(1).max(100).optional(),
@@ -30,6 +51,38 @@ export function registerGameStateHandlers(ctx: SocketHandlerContext) {
       enableBonuses: game.enableBonuses ?? true,
       teamConfig: game.teamConfig || [],
     });
+  });
+
+  /** Latence réseau légère (remplace un game:check utilisé comme ping) */
+  socket.on("game:ping", (callback: Ack) => {
+    if (typeof callback === "function") {
+      callback({ success: true });
+    }
+  });
+
+  /** S’abonner aux changements lobby (équipes, mode équipe) sans polling */
+  socket.on("player:watchLobby", (rawPayload, callback: Ack) => {
+    const parsed = lobbyGameIdSchema.safeParse(rawPayload);
+    if (!parsed.success) return callback({ success: false, error: "Payload invalide" });
+    const { gameId } = parsed.data;
+    const game = activeGames[gameId];
+    if (!game) return callback({ success: false, error: "Partie introuvable" });
+    void socket.join(lobbyWatchRoomId(gameId));
+    callback({
+      success: true,
+      status: game.status,
+      isTeamMode: game.isTeamMode,
+      enableBonuses: game.enableBonuses ?? true,
+      teamConfig: game.teamConfig || [],
+    });
+  });
+
+  socket.on("player:unwatchLobby", (rawPayload, callback: Ack) => {
+    const parsed = lobbyGameIdSchema.safeParse(rawPayload);
+    if (!parsed.success) return callback({ success: false, error: "Payload invalide" });
+    const { gameId } = parsed.data;
+    void socket.leave(lobbyWatchRoomId(gameId));
+    callback({ success: true });
   });
 
   socket.on("game:requestState", (rawPayload, callback: Ack) => {

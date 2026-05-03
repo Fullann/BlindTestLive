@@ -3,13 +3,43 @@ import { z } from "zod";
 import { Player } from "../../src/types";
 import { Ack, SocketHandlerContext } from "./context";
 
+async function relayPlayerMicToHost(
+  ctx: SocketHandlerContext,
+  gameId: string,
+  targetHostSocketId: string | undefined,
+  event: "player:micOffer" | "player:micIceCandidate" | "player:micStopped",
+  payload: Record<string, unknown>,
+): Promise<boolean> {
+  const game = ctx.activeGames[gameId];
+  if (!game) return false;
+
+  if (targetHostSocketId && targetHostSocketId.length > 0) {
+    const sockets = await ctx.io.in(gameId).fetchSockets();
+    const allowed = sockets.some(
+      (s) =>
+        s.id === targetHostSocketId &&
+        s.data?.hostGameId === gameId &&
+        (s.data?.hostRole === "owner" || s.data?.hostRole === "cohost"),
+    );
+    if (!allowed) return false;
+    ctx.io.to(targetHostSocketId).emit(event, payload);
+    return true;
+  }
+
+  if (game.adminId) {
+    ctx.io.to(game.adminId).emit(event, payload);
+    return true;
+  }
+  return false;
+}
+
 const playerJoinSchema = z.object({
   gameId: z.string().min(1).max(10),
   playerId: z.string().min(1).max(100).optional(),
   playerSecret: z.string().min(1).max(200).optional(),
   publicId: z.string().min(1).max(64).optional(),
-  name: z.string().min(1).max(20),
-  team: z.string().min(1).max(32).optional(),
+  name: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().min(1).max(20)),
+  team: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().min(1).max(32)).optional(),
 });
 
 const submitTextAnswerSchema = z.object({
@@ -257,65 +287,67 @@ export function registerPlayerHandlers(ctx: SocketHandlerContext) {
 
   // ── WebRTC mic signaling relay (player → host) ──────────────────────────
   // Player sends WebRTC offer to host
-  socket.on("player:micOffer", (rawPayload, callback: Ack) => {
+  socket.on("player:micOffer", async (rawPayload, callback: Ack) => {
     const parsed = z
       .object({
         gameId: z.string().min(1).max(10),
         playerId: z.string().min(1).max(100),
         sdp: z.object({ type: z.string(), sdp: z.string() }),
+        targetHostSocketId: z.string().min(1).max(128).optional(),
       })
       .safeParse(rawPayload);
     if (!parsed.success) return callback({ success: false, error: "Payload invalide" });
-    const { gameId, playerId, sdp } = parsed.data;
+    const { gameId, playerId, sdp, targetHostSocketId } = parsed.data;
     const game = ctx.activeGames[gameId];
     if (!game) return callback({ success: false, error: "Partie introuvable" });
     const player = game.players[playerId];
     if (!player || player.socketId !== socket.id) return callback({ success: false, error: "Non autorisé" });
-    // Relay to host socket (adminId is updated on each host:joinGame)
-    if (game.adminId) {
-      ctx.io.to(game.adminId).emit("player:micOffer", { playerId, sdp });
-    }
+    const ok = await relayPlayerMicToHost(ctx, gameId, targetHostSocketId, "player:micOffer", { playerId, sdp });
+    if (!ok) return callback({ success: false, error: "Animateur introuvable pour le micro" });
     callback({ success: true });
   });
 
   // Player sends ICE candidate to host
-  socket.on("player:micIceCandidate", (rawPayload, callback: Ack) => {
+  socket.on("player:micIceCandidate", async (rawPayload, callback: Ack) => {
     const parsed = z
       .object({
         gameId: z.string().min(1).max(10),
         playerId: z.string().min(1).max(100),
         candidate: z.any(),
+        targetHostSocketId: z.string().min(1).max(128).optional(),
       })
       .safeParse(rawPayload);
     if (!parsed.success) return callback({ success: false, error: "Payload invalide" });
-    const { gameId, playerId, candidate } = parsed.data;
+    const { gameId, playerId, candidate, targetHostSocketId } = parsed.data;
     const game = ctx.activeGames[gameId];
     if (!game) return callback({ success: false, error: "Partie introuvable" });
     const player = game.players[playerId];
     if (!player || player.socketId !== socket.id) return callback({ success: false, error: "Non autorisé" });
-    if (game.adminId) {
-      ctx.io.to(game.adminId).emit("player:micIceCandidate", { playerId, candidate });
-    }
+    const ok = await relayPlayerMicToHost(ctx, gameId, targetHostSocketId, "player:micIceCandidate", {
+      playerId,
+      candidate,
+    });
+    if (!ok) return callback({ success: false, error: "Animateur introuvable pour le micro" });
     callback({ success: true });
   });
 
   // Player notifies host that mic was stopped
-  socket.on("player:micStopped", (rawPayload, callback: Ack) => {
+  socket.on("player:micStopped", async (rawPayload, callback: Ack) => {
     const parsed = z
       .object({
         gameId: z.string().min(1).max(10),
         playerId: z.string().min(1).max(100),
+        targetHostSocketId: z.string().min(1).max(128).optional(),
       })
       .safeParse(rawPayload);
     if (!parsed.success) return callback({ success: false, error: "Payload invalide" });
-    const { gameId, playerId } = parsed.data;
+    const { gameId, playerId, targetHostSocketId } = parsed.data;
     const game = ctx.activeGames[gameId];
     if (!game) return callback({ success: false, error: "Partie introuvable" });
     const player = game.players[playerId];
     if (!player || player.socketId !== socket.id) return callback({ success: false, error: "Non autorisé" });
-    if (game.adminId) {
-      ctx.io.to(game.adminId).emit("player:micStopped", { playerId });
-    }
+    const ok = await relayPlayerMicToHost(ctx, gameId, targetHostSocketId, "player:micStopped", { playerId });
+    if (!ok) return callback({ success: false, error: "Animateur introuvable pour le micro" });
     callback({ success: true });
   });
 }

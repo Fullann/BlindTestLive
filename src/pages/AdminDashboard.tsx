@@ -5,11 +5,22 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../context/ToastContext';
 import { socket } from '../lib/socket';
-import { QRCodeSVG } from 'qrcode.react';
 import { BlindTestSession, Playlist, Track, MediaType } from '../types';
-import { Plus, Trash2, Play, Music, LogOut, Youtube, Edit, Flag, Upload, Mic, Film, Image as ImageIcon, Type, Link, Settings2, Cpu, BookOpen, Trophy, LayoutDashboard, Rocket, Activity, Moon, Sun } from 'lucide-react';
+import { Plus, Play, Music, Youtube, Flag, Upload, Mic, Film, Image as ImageIcon, Type, Link, Settings2, Cpu, BookOpen, Trophy, LayoutDashboard, Rocket, Activity } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { motion, AnimatePresence } from 'framer-motion';
+import { AdminDashboardHeader } from '../components/admin-dashboard/AdminDashboardHeader';
+import { AdminDashboardTabBar, type AdminDashboardTabId } from '../components/admin-dashboard/AdminDashboardTabBar';
+import { AdminPlaylistLaunchCard } from '../components/admin-dashboard/AdminPlaylistLaunchCard';
+import { AdminActiveSessionRow } from '../components/admin-dashboard/AdminActiveSessionRow';
+import { AdminEventQuickModal } from '../components/admin-dashboard/AdminEventQuickModal';
+import { AdminLaunchModal, type LaunchOptionsState } from '../components/admin-dashboard/AdminLaunchModal';
+import {
+  VirtualScrollArea,
+  VIRTUAL_PLAYLIST_MIN_ITEMS,
+  ADMIN_ACTIVE_SESSIONS_MOTION_MAX,
+  VIRTUAL_ACTIVE_SESSIONS_MIN,
+} from '../components/ui/VirtualScrollArea';
 
 const THEME_PRESETS = [
   'Années 80', 'Années 90', 'Années 2000 FR', 'Films cultes',
@@ -57,6 +68,13 @@ function rowToPlaylist(row: any): Playlist {
     createdAt: row.created_at,
     visibility: row.visibility || 'private',
   };
+}
+
+function formatHostCreateError(message: string): string {
+  if (message.includes('Options de partie invalides')) {
+    return 'Le serveur a refusé les paramètres de la partie (difficulté, thème, règles, équipes, etc.). Réouvre les options de lancement, vérifie les champs, puis réessaie.';
+  }
+  return message;
 }
 
 function rowToBlindTest(row: any): BlindTestSession {
@@ -164,14 +182,14 @@ export default function AdminDashboard() {
     accentColor: '#a855f7',
   });
   const [eventQuickCreated, setEventQuickCreated] = useState<{ gameId: string; joinUrl: string; screenUrl: string } | null>(null);
-  const [adminTab, setAdminTab] = useState<'sessions' | 'lancer' | 'stats' | 'business'>('sessions');
+  const [adminTab, setAdminTab] = useState<AdminDashboardTabId>('sessions');
   const [pendingPlaylistLaunch, setPendingPlaylistLaunch] = useState<Playlist | null>(null);
   const [pendingYoutubeLaunch, setPendingYoutubeLaunch] = useState<{ videoId: string; sourceUrl: string } | null>(null);
-  const [launchOptions, setLaunchOptions] = useState({
+  const [launchOptions, setLaunchOptions] = useState<LaunchOptionsState>({
     isTeamMode: false,
     shuffleQuestions: false,
-    difficulty: 'medium' as 'easy' | 'medium' | 'hard',
-    theme: 'dark' as 'dark' | 'neon' | 'retro' | 'minimal',
+    difficulty: 'medium',
+    theme: 'dark',
     enableBonuses: true,
     onboardingEnabled: true,
     tutorialSeconds: 10,
@@ -561,7 +579,7 @@ export default function AdminDashboard() {
   const launchPlaylistGame = (
     playlist: Playlist,
     params?: {
-      overrideOptions?: typeof launchOptions;
+      overrideOptions?: LaunchOptionsState;
       safeMode?: boolean;
       autoNavigate?: boolean;
       onCreated?: (gameId: string) => Promise<void> | void;
@@ -596,7 +614,7 @@ export default function AdminDashboard() {
         }
       } else {
         params?.onFailed?.();
-        toastError(response.error || 'Erreur lors de la création de la partie');
+        toastError(formatHostCreateError(String(response.error || 'Erreur lors de la création de la partie')));
       }
     });
   };
@@ -637,7 +655,7 @@ export default function AdminDashboard() {
         }
         navigate(`/admin/game/${response.gameId}`);
       } else {
-        toastError(response.error || 'Erreur lors de la création de la partie YouTube');
+        toastError(formatHostCreateError(String(response.error || 'Erreur lors de la création de la partie YouTube')));
       }
     });
   };
@@ -823,7 +841,7 @@ export default function AdminDashboard() {
     return badges.slice(0, 2);
   };
 
-  const TABS: Array<{ id: 'sessions' | 'lancer' | 'stats' | 'business'; label: string; badge?: number }> = [
+  const TABS: Array<{ id: AdminDashboardTabId; label: string; badge?: number }> = [
     { id: 'sessions', label: 'Sessions', badge: activeBlindTests.length > 0 ? activeBlindTests.length : undefined },
     { id: 'lancer', label: 'Lancer une partie' },
     { id: 'stats', label: 'Stats' },
@@ -832,49 +850,15 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white app-shell">
-      {/* ── Header ── */}
-      <header className="sticky top-0 z-20 bg-zinc-950/95 backdrop-blur-lg border-b border-white/5 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/25">
-              <Music className="w-4 h-4 text-white" />
-            </div>
-            {activeBlindTests.length > 0 && (
-              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-zinc-950 flex items-center justify-center">
-                <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping absolute" />
-              </span>
-            )}
-          </div>
-          <div className="flex flex-col">
-            <span className="font-black text-base tracking-tight leading-none">BlindTest<span className="text-indigo-400">Live</span></span>
-            <span className="text-[11px] text-zinc-500 mt-0.5 leading-none">{user?.email}</span>
-          </div>
-          {activeBlindTests.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="hidden sm:flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/25 rounded-full px-2.5 py-1"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-[11px] text-emerald-300 font-semibold">{activeBlindTests.length} en cours</span>
-            </motion.div>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button onClick={() => navigate('/admin/hardware')} className="text-xs text-zinc-500 hover:text-zinc-200 hover:bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-all">
-            <Cpu className="w-3.5 h-3.5" />Matériel
-          </button>
-          <button onClick={() => navigate('/admin/settings')} className="text-xs text-zinc-500 hover:text-zinc-200 hover:bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-all">
-            <Settings2 className="w-3.5 h-3.5" />Paramètres
-          </button>
-          <button onClick={toggleTheme} className="text-xs text-zinc-500 hover:text-zinc-200 hover:bg-white/5 border border-white/8 rounded-lg p-1.5 transition-all" title="Changer de thème">
-            {theme === 'light' ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
-          </button>
-          <button onClick={handleLogout} className="text-xs text-zinc-500 hover:text-red-400 hover:bg-red-500/5 border border-white/8 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-all">
-            <LogOut className="w-3.5 h-3.5" />Déco
-          </button>
-        </div>
-      </header>
+      <AdminDashboardHeader
+        userEmail={user?.email}
+        activeSessionCount={activeBlindTests.length}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onNavigateHardware={() => navigate('/admin/hardware')}
+        onNavigateSettings={() => navigate('/admin/settings')}
+        onLogout={() => void handleLogout()}
+      />
 
       <div className="max-w-5xl mx-auto px-6 py-8">
 
@@ -900,34 +884,7 @@ export default function AdminDashboard() {
           ))}
         </div>
 
-        {/* ── Tabs ── */}
-        <div className="flex items-center gap-1 bg-zinc-900 border border-white/8 rounded-2xl p-1.5 mb-8 w-fit">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setAdminTab(tab.id)}
-              className={`relative px-4 py-2 rounded-xl text-sm font-medium transition-all ${
-                adminTab === tab.id
-                  ? 'text-white shadow'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
-              }`}
-            >
-              {adminTab === tab.id && (
-                <motion.span
-                  layoutId="admin-tab-active-pill"
-                  className="absolute inset-0 rounded-xl bg-indigo-600"
-                  transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-                />
-              )}
-              <span className="relative">{tab.label}</span>
-              {tab.badge !== undefined && (
-                <span className="relative ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500 text-white text-[10px] font-bold">
-                  {tab.badge}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
+        <AdminDashboardTabBar tabs={TABS} activeTab={adminTab} onChange={setAdminTab} />
 
         <AnimatePresence mode="wait">
         <motion.div
@@ -977,43 +934,58 @@ export default function AdminDashboard() {
                     Lancer une partie <span>→</span>
                   </button>
                 </div>
-              ) : (
+              ) : activeBlindTests.length >= VIRTUAL_ACTIVE_SESSIONS_MIN ? (
+                <VirtualScrollArea
+                  count={activeBlindTests.length}
+                  estimateSize={92}
+                  maxHeight="min(60vh, 520px)"
+                  className="pr-1"
+                  listLabel="Sessions en cours"
+                  getItemKey={(i) => activeBlindTests[i]?.id ?? `s-${i}`}
+                >
+                  {(vr) => {
+                    const session = activeBlindTests[vr.index];
+                    if (!session) return null;
+                    return (
+                      <div className="pb-2.5 box-border">
+                        <AdminActiveSessionRow
+                          variant="static"
+                          session={session}
+                          endingSessionId={endingSessionId}
+                          onResume={() => navigate(`/admin/game/${session.gameId}`)}
+                          onEnd={() => handleEndBlindTest(session)}
+                        />
+                      </div>
+                    );
+                  }}
+                </VirtualScrollArea>
+              ) : activeBlindTests.length <= ADMIN_ACTIVE_SESSIONS_MOTION_MAX ? (
                 <div className="space-y-2.5">
                   <AnimatePresence initial={false}>
                     {activeBlindTests.map((session) => (
-                    <motion.div
-                      key={session.id}
-                      initial={{ opacity: 0, y: 12, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -12, scale: 0.98 }}
-                      whileHover={{ y: -2, scale: 1.005 }}
-                      className="bg-zinc-950 border border-emerald-500/25 rounded-xl p-4 flex items-center justify-between transition-all hover:border-emerald-400/50"
-                      style={{ boxShadow: '0 0 20px rgba(52,211,153,0.06)' }}
-                    >
-                      <div>
-                        <p className="font-semibold">{session.title}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-xs text-zinc-500">Code:</span>
-                          <code className="text-xs font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">{session.gameId}</code>
-                          <span className="text-xs text-zinc-600">{new Date(session.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <motion.button
-                          whileHover={{ scale: 1.03 }}
-                          whileTap={{ scale: 0.97 }}
-                          onClick={() => navigate(`/admin/game/${session.gameId}`)}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-colors shadow-md shadow-indigo-500/20"
-                        >
-                          Reprendre →
-                        </motion.button>
-                        <button onClick={() => handleEndBlindTest(session)} disabled={endingSessionId === session.id} className="bg-red-600/15 hover:bg-red-600/25 disabled:opacity-50 text-red-400 px-3 py-2 rounded-xl text-xs border border-red-500/20 transition-colors">
-                          {endingSessionId === session.id ? 'Arrêt…' : 'Terminer'}
-                        </button>
-                      </div>
-                    </motion.div>
-                  ))}
+                      <AdminActiveSessionRow
+                        key={session.id}
+                        variant="motion"
+                        session={session}
+                        endingSessionId={endingSessionId}
+                        onResume={() => navigate(`/admin/game/${session.gameId}`)}
+                        onEnd={() => handleEndBlindTest(session)}
+                      />
+                    ))}
                   </AnimatePresence>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {activeBlindTests.map((session) => (
+                    <AdminActiveSessionRow
+                      key={session.id}
+                      variant="static"
+                      session={session}
+                      endingSessionId={endingSessionId}
+                      onResume={() => navigate(`/admin/game/${session.gameId}`)}
+                      onEnd={() => handleEndBlindTest(session)}
+                    />
+                  ))}
                 </div>
               )}
             </div>
@@ -1103,39 +1075,52 @@ export default function AdminDashboard() {
                     Créer une playlist
                   </button>
                 </div>
+              ) : playlists.length >= VIRTUAL_PLAYLIST_MIN_ITEMS ? (
+                <VirtualScrollArea
+                  count={playlists.length}
+                  estimateSize={156}
+                  maxHeight="min(70vh, 640px)"
+                  className="mt-4 pr-1"
+                  listLabel="Playlists disponibles pour lancer une partie"
+                  getItemKey={(i) => playlists[i]?.id ?? `pl-${i}`}
+                >
+                  {(vr) => {
+                    const playlist = playlists[vr.index];
+                    if (!playlist) return null;
+                    const badges = getPlaylistTypeBadge(playlist);
+                    return (
+                      <div className="pb-3 box-border">
+                        <AdminPlaylistLaunchCard
+                          playlist={playlist}
+                          badges={badges}
+                          animate={false}
+                          onEdit={() => navigate(`/playlists/${playlist.id}`)}
+                          onLaunch={() => {
+                            setPendingPlaylistLaunch(playlist);
+                            setShowLaunchModal(true);
+                          }}
+                        />
+                      </div>
+                    );
+                  }}
+                </VirtualScrollArea>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
                   {playlists.map((playlist, index) => {
                     const badges = getPlaylistTypeBadge(playlist);
                     return (
-                      <motion.div
+                      <AdminPlaylistLaunchCard
                         key={playlist.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.015 * index }}
-                        whileHover={{ y: -3, scale: 1.01 }}
-                        className="bg-zinc-950 border border-white/8 rounded-2xl p-4 flex flex-col gap-3 hover:border-white/15 transition-all"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1 min-w-0">
-                            <p className="font-semibold truncate">{playlist.name}</p>
-                            <p className="text-xs text-zinc-500 mt-0.5">{playlist.tracks.length} piste{playlist.tracks.length !== 1 ? 's' : ''}</p>
-                          </div>
-                          <div className="flex flex-wrap gap-1 justify-end flex-shrink-0">
-                            {badges.map((b) => (
-                              <span key={b} className="text-[10px] bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 px-2 py-0.5 rounded-full">{b}</span>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button onClick={() => navigate(`/playlists/${playlist.id}`)} className="flex-1 text-xs text-zinc-500 hover:text-zinc-300 border border-white/8 hover:border-white/15 rounded-lg py-1.5 transition-all flex items-center justify-center gap-1">
-                            <Edit className="w-3.5 h-3.5" />Éditer
-                          </button>
-                          <button onClick={() => { setPendingPlaylistLaunch(playlist); setShowLaunchModal(true); }} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold py-2 rounded-xl flex items-center justify-center gap-1.5 transition-colors">
-                            <Play className="w-4 h-4" />Lancer
-                          </button>
-                        </div>
-                      </motion.div>
+                        playlist={playlist}
+                        badges={badges}
+                        animate
+                        motionIndex={index}
+                        onEdit={() => navigate(`/playlists/${playlist.id}`)}
+                        onLaunch={() => {
+                          setPendingPlaylistLaunch(playlist);
+                          setShowLaunchModal(true);
+                        }}
+                      />
                     );
                   })}
                 </div>
@@ -1348,280 +1333,36 @@ export default function AdminDashboard() {
         </motion.div>
         </AnimatePresence>
 
-        {/* EVENT QUICK MODAL */}
-        <AnimatePresence>
-        {showEventQuickModal && (
-          <motion.div
-            key="eq-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.94, y: 24 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 12 }}
-              transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-              className="w-full max-w-2xl bg-zinc-900 border border-white/12 rounded-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto shadow-2xl shadow-black/60"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-xl font-semibold">Mode événement — lancement guidé</h3>
-                  <div className="flex items-center gap-1.5 mt-2">
-                    {[1,2,3].map((s) => (
-                      <div key={s} className={`h-1 rounded-full transition-all duration-300 ${s <= eventQuickStep ? 'bg-indigo-500 w-8' : 'bg-zinc-700 w-5'}`} />
-                    ))}
-                    <span className="text-xs text-zinc-500 ml-1">Étape {eventQuickStep}/3</span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setShowEventQuickModal(false)}
-                  className="text-zinc-500 hover:text-zinc-300 hover:bg-white/5 w-8 h-8 rounded-lg flex items-center justify-center transition-all text-lg"
-                >
-                  ×
-                </button>
-              </div>
-              <AnimatePresence mode="wait">
-              {eventQuickStep === 1 && (
-                <motion.div
-                  key="eq-step-1"
-                  initial={{ opacity: 0, x: 16 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -16 }}
-                  transition={{ duration: 0.18 }}
-                  className="space-y-4"
-                >
-                  <p className="text-sm text-zinc-400">Choisis la playlist à lancer.</p>
-                  <select
-                    value={eventQuickPlaylistId}
-                    onChange={(e) => setEventQuickPlaylistId(e.target.value)}
-                    className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm"
-                  >
-                    <option value="">Sélectionner une playlist</option>
-                    {playlists.map((playlist) => (
-                      <option key={playlist.id} value={playlist.id}>
-                        {playlist.name} ({playlist.tracks.length} pistes)
-                      </option>
-                    ))}
-                  </select>
-                  <div className="flex justify-end gap-3">
-                    <button onClick={() => setShowEventQuickModal(false)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm transition-colors">Annuler</button>
-                    <motion.button
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.97 }}
-                      onClick={() => setEventQuickStep(2)}
-                      disabled={!eventQuickPlaylistId}
-                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-5 py-2 rounded-xl text-sm font-semibold transition-colors"
-                    >
-                      Continuer →
-                    </motion.button>
-                  </div>
-                </motion.div>
-              )}
-              {eventQuickStep === 2 && (
-                <motion.div
-                  key="eq-step-2"
-                  initial={{ opacity: 0, x: 16 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -16 }}
-                  transition={{ duration: 0.18 }}
-                  className="space-y-4"
-                >
-                  <p className="text-sm text-zinc-400">Configure le branding à appliquer automatiquement.</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <input
-                      type="text"
-                      value={eventQuickBranding.clientName}
-                      onChange={(e) => setEventQuickBranding((prev) => ({ ...prev, clientName: e.target.value }))}
-                      placeholder="Nom client / événement"
-                      className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500/50 transition-colors"
-                    />
-                    <input
-                      type="text"
-                      value={eventQuickBranding.logoUrl}
-                      onChange={(e) => setEventQuickBranding((prev) => ({ ...prev, logoUrl: e.target.value }))}
-                      placeholder="URL logo (optionnel)"
-                      className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500/50 transition-colors"
-                    />
-                    <label className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm flex items-center justify-between">
-                      Couleur primaire
-                      <input
-                        type="color"
-                        value={eventQuickBranding.primaryColor}
-                        onChange={(e) => setEventQuickBranding((prev) => ({ ...prev, primaryColor: e.target.value }))}
-                      />
-                    </label>
-                    <label className="bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-sm flex items-center justify-between">
-                      Couleur accent
-                      <input
-                        type="color"
-                        value={eventQuickBranding.accentColor}
-                        onChange={(e) => setEventQuickBranding((prev) => ({ ...prev, accentColor: e.target.value }))}
-                      />
-                    </label>
-                  </div>
-                  <div className="flex justify-end gap-3">
-                    <button onClick={() => setEventQuickStep(1)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm transition-colors">← Retour</button>
-                    <motion.button
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.97 }}
-                      onClick={() => void handlePrepareEventQuick()}
-                      disabled={eventQuickBusy}
-                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-5 py-2 rounded-xl text-sm font-semibold transition-colors"
-                    >
-                      {eventQuickBusy ? (
-                        <span className="flex items-center gap-2">
-                          <motion.span animate={{ rotate: 360 }} transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 rounded-full border border-white/30 border-t-white inline-block" />
-                          Préparation…
-                        </span>
-                      ) : 'Préparer QR live'}
-                    </motion.button>
-                  </div>
-                </motion.div>
-              )}
-              {eventQuickStep === 3 && eventQuickCreated && (
-                <motion.div
-                  key="eq-step-3"
-                  initial={{ opacity: 0, scale: 0.97 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.22 }}
-                  className="space-y-4"
-                >
-                  <div className="flex items-center gap-2 text-emerald-400">
-                    <div className="w-5 h-5 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-xs">✓</div>
-                    <p className="text-sm font-medium">Session créée — QR prêt !</p>
-                  </div>
-                  <div className="bg-zinc-950 border border-white/10 rounded-2xl p-5 flex flex-col items-center gap-4">
-                    <div className="p-3 bg-white rounded-xl">
-                      <QRCodeSVG value={eventQuickCreated.joinUrl} size={160} />
-                    </div>
-                    <p className="text-xs text-zinc-500 text-center break-all">{eventQuickCreated.joinUrl}</p>
-                    <a href={eventQuickCreated.screenUrl} target="_blank" rel="noreferrer" className="text-indigo-300 hover:text-indigo-200 text-sm underline underline-offset-2 transition-colors">
-                      Ouvrir l'écran public →
-                    </a>
-                  </div>
-                  <div className="flex justify-end gap-3">
-                    <button onClick={() => setShowEventQuickModal(false)} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm transition-colors">Fermer</button>
-                    <motion.button
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.97 }}
-                      onClick={() => navigate(`/admin/game/${eventQuickCreated.gameId}?safe=1`)}
-                      className="bg-emerald-600 hover:bg-emerald-500 px-5 py-2 rounded-xl text-sm font-semibold transition-colors"
-                    >
-                      Démarrer (safe mode) →
-                    </motion.button>
-                  </div>
-                </motion.div>
-              )}
-              </AnimatePresence>
-            </motion.div>
-          </motion.div>
-        )}
-        </AnimatePresence>
+        <AdminEventQuickModal
+          open={showEventQuickModal}
+          onClose={() => setShowEventQuickModal(false)}
+          eventQuickStep={eventQuickStep}
+          setEventQuickStep={setEventQuickStep}
+          eventQuickPlaylistId={eventQuickPlaylistId}
+          setEventQuickPlaylistId={setEventQuickPlaylistId}
+          playlists={playlists}
+          eventQuickBranding={eventQuickBranding}
+          setEventQuickBranding={setEventQuickBranding}
+          eventQuickBusy={eventQuickBusy}
+          onPrepareEventQuick={handlePrepareEventQuick}
+          eventQuickCreated={eventQuickCreated}
+          navigate={navigate}
+        />
 
-        {/* LAUNCH MODAL */}
-        <AnimatePresence>
-        {showLaunchModal && (
-          <motion.div
-            key="launch-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
-          >
-          <motion.div
-            initial={{ opacity: 0, scale: 0.94, y: 24 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: 12 }}
-            transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-            className="w-full max-w-2xl bg-zinc-900 border border-white/12 rounded-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl shadow-black/60"
-          >
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-xl font-semibold">Options de lancement</h3>
-                  <p className="text-sm text-zinc-400 mt-0.5">Configure cette partie — uniquement pour ce lancement.</p>
-                </div>
-                <button
-                  onClick={() => { setShowLaunchModal(false); setPendingPlaylistLaunch(null); setPendingYoutubeLaunch(null); }}
-                  className="text-zinc-500 hover:text-zinc-300 hover:bg-white/5 w-8 h-8 rounded-lg flex items-center justify-center transition-all text-lg"
-                >
-                  ×
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 text-sm space-y-2">
-                  <span className="block text-zinc-300">Difficulté</span>
-                  <select value={launchOptions.difficulty} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, difficulty: e.target.value as 'easy' | 'medium' | 'hard' }))} className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2">
-                    <option value="easy">Facile (30s)</option><option value="medium">Moyen (20s)</option><option value="hard">Difficile (12s)</option>
-                  </select>
-                </label>
-                <label className="bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 text-sm space-y-2">
-                  <span className="block text-zinc-300">Thème visuel</span>
-                  <select value={launchOptions.theme} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, theme: e.target.value as 'dark' | 'neon' | 'retro' | 'minimal' }))} className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2">
-                    <option value="dark">Dark</option><option value="neon">Neon</option><option value="retro">Retro</option><option value="minimal">Minimal</option>
-                  </select>
-                </label>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3"><span className="text-sm">Bonus et jokers</span><input type="checkbox" checked={launchOptions.enableBonuses} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, enableBonuses: e.target.checked }))} /></label>
-                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3"><span className="text-sm">Mode équipe</span><input type="checkbox" checked={launchOptions.isTeamMode} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, isTeamMode: e.target.checked }))} /></label>
-                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 md:col-span-2"><span className="text-sm">Ordre aléatoire</span><input type="checkbox" checked={launchOptions.shuffleQuestions} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, shuffleQuestions: e.target.checked }))} /></label>
-                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3"><span className="text-sm">Onboarding public (10s)</span><input type="checkbox" checked={launchOptions.onboardingEnabled} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, onboardingEnabled: e.target.checked }))} /></label>
-                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3"><span className="text-sm">Mode tournoi multi-manches</span><input type="checkbox" checked={launchOptions.tournamentMode} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, tournamentMode: e.target.checked }))} /></label>
-                <label className="flex items-center justify-between bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 md:col-span-2"><span className="text-sm">Timer strict (révélation auto)</span><input type="checkbox" checked={launchOptions.strictTimerEnabled} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, strictTimerEnabled: e.target.checked }))} /></label>
-              </div>
-
-              <div className="bg-zinc-950 border border-white/10 rounded-xl p-4 space-y-3">
-                <p className="text-sm font-medium">Règles personnalisées</p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <label className="text-xs text-zinc-400">Pénalité mauvaise réponse<input type="number" min={-20} max={0} value={launchOptions.rules.wrongAnswerPenalty} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, rules: { ...prev.rules, wrongAnswerPenalty: Number(e.target.value) || 0 } }))} className="mt-1 w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200" /></label>
-                  <label className="text-xs text-zinc-400">Pénalité anti-spam<input type="number" min={-20} max={0} value={launchOptions.rules.antiSpamPenalty} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, rules: { ...prev.rules, antiSpamPenalty: Number(e.target.value) || 0 } }))} className="mt-1 w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200" /></label>
-                  <label className="text-xs text-zinc-400">Verrouillage progressif (ms)<input type="number" min={1000} max={20000} step={500} value={launchOptions.rules.progressiveLockBaseMs} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, rules: { ...prev.rules, progressiveLockBaseMs: Number(e.target.value) || 5000 } }))} className="mt-1 w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200" /></label>
-                </div>
-                <label className="flex items-center justify-between bg-zinc-900 border border-white/10 rounded-lg px-3 py-2"><span className="text-sm">Verrouillage progressif actif</span><input type="checkbox" checked={launchOptions.rules.progressiveLock} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, rules: { ...prev.rules, progressiveLock: e.target.checked } }))} /></label>
-              </div>
-
-              {launchOptions.isTeamMode && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-zinc-400">Équipes disponibles</p>
-                    <button type="button" onClick={() => setLaunchOptions((prev) => ({ ...prev, teamConfig: [...prev.teamConfig, createTeamConfigItem(prev.teamConfig.length)] }))} className="text-xs bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-200 px-3 py-1.5 rounded-lg flex items-center gap-1"><Plus className="w-3.5 h-3.5" />Ajouter</button>
-                  </div>
-                  {launchOptions.teamConfig.map((team) => (
-                    <div key={team.id} className="grid grid-cols-12 gap-2 items-center bg-zinc-950 border border-white/10 rounded-xl p-3">
-                      <div className="col-span-1"><input type="checkbox" checked={team.enabled} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, teamConfig: prev.teamConfig.map((item) => item.id === team.id ? { ...item, enabled: e.target.checked } : item) }))} /></div>
-                      <div className="col-span-2"><input type="color" value={team.color} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, teamConfig: prev.teamConfig.map((item) => item.id === team.id ? { ...item, color: e.target.value } : item) }))} className="w-full h-9 bg-transparent border border-white/10 rounded" /></div>
-                      <div className="col-span-9 flex items-center gap-2">
-                        <input type="text" value={team.name} onChange={(e) => setLaunchOptions((prev) => ({ ...prev, teamConfig: prev.teamConfig.map((item) => item.id === team.id ? { ...item, name: e.target.value } : item) }))} className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm" />
-                        <button type="button" onClick={() => setLaunchOptions((prev) => ({ ...prev, teamConfig: prev.teamConfig.filter((item) => item.id !== team.id) }))} className="text-red-300 hover:text-red-200 bg-red-600/10 hover:bg-red-600/20 border border-red-500/20 rounded-lg p-2"><Trash2 className="w-4 h-4" /></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex justify-end gap-3 pt-2">
-                <button onClick={() => { setShowLaunchModal(false); setPendingPlaylistLaunch(null); setPendingYoutubeLaunch(null); }} className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm transition-colors">Annuler</button>
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.97 }}
-                  onClick={handleLaunchWithOptions}
-                  className="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center gap-2"
-                >
-                  <Play className="w-4 h-4" />
-                  Lancer la partie
-                </motion.button>
-              </div>
-          </motion.div>
-          </motion.div>
-        )}
-        </AnimatePresence>
+        <AdminLaunchModal
+          open={showLaunchModal}
+          onClose={() => {
+            setShowLaunchModal(false);
+            setPendingPlaylistLaunch(null);
+            setPendingYoutubeLaunch(null);
+          }}
+          pendingPlaylist={pendingPlaylistLaunch}
+          pendingYoutube={pendingYoutubeLaunch}
+          launchOptions={launchOptions}
+          setLaunchOptions={setLaunchOptions}
+          onLaunch={handleLaunchWithOptions}
+          createTeamConfigItem={createTeamConfigItem}
+        />
       </div>
     </div>
   );

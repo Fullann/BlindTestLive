@@ -86,7 +86,11 @@ const COLORS: Record<ToastType, string> = {
 function ToastContainer({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: string) => void }) {
   if (toasts.length === 0) return null;
   return (
-    <div className="fixed bottom-6 right-6 z-[9999] flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+    <div
+      className="fixed bottom-6 right-6 z-[9999] flex flex-col gap-3 max-w-sm w-full pointer-events-none"
+      aria-live="polite"
+      aria-relevant="additions"
+    >
       {toasts.map((t) => (
         <div
           key={t.id}

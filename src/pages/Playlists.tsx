@@ -10,6 +10,11 @@ import {
   FileAudio, ChevronRight, Music, List, Share2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import {
+  VirtualScrollArea,
+  VIRTUAL_PLAYLIST_MIN_ITEMS,
+  PLAYERS_MOTION_MAX,
+} from '../components/ui/VirtualScrollArea';
 
 type QuestionType = 'buzz' | 'text_open' | 'qcm';
 
@@ -73,6 +78,95 @@ interface PlaylistItem {
   trackCount: number;
   visibility: 'private' | 'public';
   category?: string;
+}
+
+function PlaylistListRow({
+  pl,
+  index,
+  motion: useMotion,
+  navigate,
+  onShare,
+  onDelete,
+}: {
+  pl: PlaylistItem;
+  index: number;
+  motion: boolean;
+  navigate: ReturnType<typeof useNavigate>;
+  onShare: (id: string) => void;
+  onDelete: (id: string, name: string) => void;
+}) {
+  const inner = (
+    <>
+      <div className="w-10 h-10 rounded-xl bg-indigo-600/20 text-indigo-300 flex items-center justify-center flex-shrink-0">
+        <Music2 className="w-5 h-5" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-semibold truncate">{pl.name}</p>
+        <div className="flex items-center gap-2 mt-0.5">
+          <span className="text-xs text-zinc-500">
+            {pl.trackCount} piste{pl.trackCount !== 1 ? 's' : ''}
+          </span>
+          <span className="w-1 h-1 rounded-full bg-zinc-700" />
+          <span
+            className={`text-xs flex items-center gap-1 ${pl.visibility === 'public' ? 'text-emerald-400' : 'text-zinc-600'}`}
+          >
+            {pl.visibility === 'public' ? <Globe className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+            {pl.visibility === 'public' ? 'Publique' : 'Privée'}
+          </span>
+          {pl.category && (
+            <>
+              <span className="w-1 h-1 rounded-full bg-zinc-700" />
+              <span className="text-xs text-zinc-600">{pl.category}</span>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <button
+          type="button"
+          onClick={() => void onShare(pl.id)}
+          className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-emerald-300 border border-white/8 hover:border-emerald-500/30 rounded-lg px-3 py-1.5 transition-all"
+        >
+          <Share2 className="w-3.5 h-3.5" />
+          Partager
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate(`/playlists/${pl.id}`)}
+          className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-indigo-300 border border-white/8 hover:border-indigo-500/30 rounded-lg px-3 py-1.5 transition-all"
+        >
+          <Edit3 className="w-3.5 h-3.5" />
+          Éditer
+        </button>
+        <button
+          type="button"
+          onClick={() => onDelete(pl.id, pl.name)}
+          className="text-zinc-700 hover:text-red-400 transition-colors p-1.5"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </>
+  );
+
+  const cls =
+    'group flex items-center gap-4 rounded-2xl border border-white/8 bg-zinc-900 p-4 hover:border-white/15 transition-all';
+
+  if (useMotion) {
+    const capped = Math.min(index, 24);
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: capped * 0.04 }}
+        className={cls}
+      >
+        {inner}
+      </motion.div>
+    );
+  }
+
+  return <div className={cls}>{inner}</div>;
 }
 
 export default function Playlists() {
@@ -242,59 +336,44 @@ export default function Playlists() {
                     Créer ma première playlist
                   </button>
                 </div>
+              ) : playlists.length >= VIRTUAL_PLAYLIST_MIN_ITEMS ? (
+                <VirtualScrollArea
+                  count={playlists.length}
+                  estimateSize={108}
+                  maxHeight="min(70vh, 560px)"
+                  className="pr-1"
+                  listLabel="Mes playlists"
+                  getItemKey={(i) => playlists[i]?.id ?? `pl-${i}`}
+                >
+                  {(vr) => {
+                    const pl = playlists[vr.index];
+                    if (!pl) return null;
+                    return (
+                      <div className="pb-2 box-border">
+                        <PlaylistListRow
+                          pl={pl}
+                          index={vr.index}
+                          motion={false}
+                          navigate={navigate}
+                          onShare={handleShare}
+                          onDelete={handleDelete}
+                        />
+                      </div>
+                    );
+                  }}
+                </VirtualScrollArea>
               ) : (
                 <div className="space-y-2">
                   {playlists.map((pl, i) => (
-                    <motion.div
+                    <PlaylistListRow
                       key={pl.id}
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.04 }}
-                      className="group flex items-center gap-4 rounded-2xl border border-white/8 bg-zinc-900 p-4 hover:border-white/15 transition-all"
-                    >
-                      <div className="w-10 h-10 rounded-xl bg-indigo-600/20 text-indigo-300 flex items-center justify-center flex-shrink-0">
-                        <Music2 className="w-5 h-5" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold truncate">{pl.name}</p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-xs text-zinc-500">{pl.trackCount} piste{pl.trackCount !== 1 ? 's' : ''}</span>
-                          <span className="w-1 h-1 rounded-full bg-zinc-700" />
-                          <span className={`text-xs flex items-center gap-1 ${pl.visibility === 'public' ? 'text-emerald-400' : 'text-zinc-600'}`}>
-                            {pl.visibility === 'public' ? <Globe className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
-                            {pl.visibility === 'public' ? 'Publique' : 'Privée'}
-                          </span>
-                          {pl.category && (
-                            <>
-                              <span className="w-1 h-1 rounded-full bg-zinc-700" />
-                              <span className="text-xs text-zinc-600">{pl.category}</span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <button
-                          onClick={() => void handleShare(pl.id)}
-                          className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-emerald-300 border border-white/8 hover:border-emerald-500/30 rounded-lg px-3 py-1.5 transition-all"
-                        >
-                          <Share2 className="w-3.5 h-3.5" />
-                          Partager
-                        </button>
-                        <button
-                          onClick={() => navigate(`/playlists/${pl.id}`)}
-                          className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-indigo-300 border border-white/8 hover:border-indigo-500/30 rounded-lg px-3 py-1.5 transition-all"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          Éditer
-                        </button>
-                        <button
-                          onClick={() => handleDelete(pl.id, pl.name)}
-                          className="text-zinc-700 hover:text-red-400 transition-colors p-1.5"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </motion.div>
+                      pl={pl}
+                      index={i}
+                      motion={playlists.length <= PLAYERS_MOTION_MAX}
+                      navigate={navigate}
+                      onShare={handleShare}
+                      onDelete={handleDelete}
+                    />
                   ))}
                 </div>
               )}

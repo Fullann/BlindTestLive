@@ -4,6 +4,12 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
 import { socket } from '../lib/socket';
+import type {
+  GameCheckResult,
+  GameLobbyMetaPayload,
+  PlayerJoinGameAck,
+  PlayerWatchLobbyResult,
+} from '../types/socket-events';
 import {
   LogIn, Monitor, Play, Users, Tv, LayoutDashboard, Ticket,
   Sparkles, ChevronRight, ArrowLeft, Music2, MicVocal
@@ -102,6 +108,8 @@ export default function Home() {
 
   const normalizeCode = (v: string) => v.replace(/\s+/g, '').toUpperCase();
 
+  const ackError = (message: string | undefined, fallback: string) => message || fallback;
+
   // Auto-rejoin
   useEffect(() => {
     const savedGameId = normalizeCode(localStorage.getItem('blindtest_last_game_id') || '');
@@ -111,15 +119,15 @@ export default function Home() {
     const savedTeam = localStorage.getItem('blindtest_player_team') || undefined;
     if (!savedGameId || !playerId || !playerSecret || !savedName) return;
     setPlayerLoading(true);
-    socket.emit('game:check', savedGameId, (check: any) => {
-      if (!check?.success || check?.status === 'finished') {
+    socket.emit('game:check', savedGameId, (check: GameCheckResult) => {
+      if (!check.success || check.status === 'finished') {
         localStorage.removeItem('blindtest_last_game_id');
         setPlayerLoading(false);
         return;
       }
-      socket.emit('player:joinGame', { gameId: savedGameId, playerId, playerSecret, name: savedName, team: savedTeam }, (res: any) => {
+      socket.emit('player:joinGame', { gameId: savedGameId, playerId, playerSecret, name: savedName, team: savedTeam }, (res: PlayerJoinGameAck) => {
         setPlayerLoading(false);
-        if (res?.success) navigate(`/game/${savedGameId}`);
+        if (res.success) navigate(`/game/${savedGameId}`);
       });
     });
   }, [navigate]);
@@ -128,10 +136,16 @@ export default function Home() {
 
   const checkGameCode = (code: string, onReady?: (teams: Array<{ id: string; name: string; color: string; enabled: boolean }>, teamMode: boolean) => void) => {
     setPlayerLoading(true);
-    socket.emit('game:check', code, (res: any) => {
+    socket.emit('game:check', code, (res: GameCheckResult) => {
       setPlayerLoading(false);
-      if (!res?.success) { setError(res?.error || 'Partie introuvable'); return; }
-      if (res?.status === 'finished') { setError('Cette partie est terminée.'); return; }
+      if (!res.success) {
+        setError(ackError((res as Extract<GameCheckResult, { success: false }>).error, 'Partie introuvable'));
+        return;
+      }
+      if (res.status === 'finished') {
+        setError('Cette partie est terminée.');
+        return;
+      }
       const teamMode = Boolean(res.isTeamMode);
       const teams = Array.isArray(res.teamConfig) ? res.teamConfig.filter((t: any) => t?.enabled) : [];
       setIsTeamMode(teamMode);
@@ -148,23 +162,39 @@ export default function Home() {
     const code = normalizeCode(gameCode);
     if (!code) return;
 
-    const refreshTeamConfig = () => {
-      socket.emit('game:check', code, (res: any) => {
-        if (!res?.success || res?.status === 'finished') return;
-        const teamMode = Boolean(res.isTeamMode);
-        const teams = Array.isArray(res.teamConfig) ? res.teamConfig.filter((t: any) => t?.enabled) : [];
-        setIsTeamMode(teamMode);
-        setAvailableTeams(teams);
-        setTeam((prev) => (teams.some((t: any) => t.id === prev) ? prev : ''));
-      });
+    const applyLobbyPayload = (payload: Pick<GameLobbyMetaPayload, 'status' | 'isTeamMode' | 'teamConfig'>) => {
+      if (payload?.status === 'finished') {
+        setError('Cette partie est terminée.');
+        return;
+      }
+      const teamMode = Boolean(payload.isTeamMode);
+      const teams = Array.isArray(payload.teamConfig) ? payload.teamConfig.filter((t: any) => t?.enabled) : [];
+      setIsTeamMode(teamMode);
+      setAvailableTeams(teams);
+      setTeam((prev) => (teams.some((t: any) => t.id === prev) ? prev : ''));
     };
 
-    // Mise à jour live des équipes avant que le joueur rejoigne la partie.
-    refreshTeamConfig();
-    const refreshId = window.setInterval(refreshTeamConfig, 1500);
+    const onLobbyMeta = (payload: GameLobbyMetaPayload) => {
+      if (!payload?.gameId || normalizeCode(payload.gameId) !== code) return;
+      applyLobbyPayload(payload);
+    };
+
+    socket.on('game:lobbyMeta', onLobbyMeta);
+    socket.emit('player:watchLobby', { gameId: code }, (res: PlayerWatchLobbyResult) => {
+      if (res.success) {
+        applyLobbyPayload({
+          status: res.status,
+          isTeamMode: Boolean(res.isTeamMode),
+          teamConfig: res.teamConfig ?? [],
+        });
+      } else {
+        setError(ackError((res as Extract<PlayerWatchLobbyResult, { success: false }>).error, 'Partie introuvable'));
+      }
+    });
 
     return () => {
-      window.clearInterval(refreshId);
+      socket.off('game:lobbyMeta', onLobbyMeta);
+      socket.emit('player:unwatchLobby', { gameId: code }, () => {});
     };
   }, [activeMode, playerStep, gameCode]);
 
@@ -187,10 +217,14 @@ export default function Home() {
     socket.emit(
       'player:joinGame',
       { gameId: code, playerId, playerSecret, name: trimmedName, team: isTeamMode && availableTeams.length > 0 ? effectiveTeam : undefined },
-      (res: any) => {
+      (res: PlayerJoinGameAck) => {
         setPlayerLoading(false);
-        if (res?.success) { localStorage.setItem('blindtest_last_game_id', code); navigate(`/game/${code}`); }
-        else setError(res?.error || 'Connexion impossible');
+        if (res.success) {
+          localStorage.setItem('blindtest_last_game_id', code);
+          navigate(`/game/${code}`);
+        } else {
+          setError(ackError((res as Extract<PlayerJoinGameAck, { success: false }>).error, 'Connexion impossible'));
+        }
       },
     );
   };

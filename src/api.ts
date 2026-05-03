@@ -1,6 +1,6 @@
 const BASE_URL = '';
 
-/** Chemins qui peuvent légitimement retourner 401 sans déclencher de redirection */
+/** Chemins où un 401 est attendu pendant le flux d’auth (pas une « session expirée »). */
 const AUTH_PATHS = ['/api/auth/login', '/api/auth/register', '/api/auth/login/2fa'];
 
 async function request<T = unknown>(
@@ -21,9 +21,12 @@ async function request<T = unknown>(
 
   const data = await res.json().catch(() => ({}));
 
-  // Interceptor 401 : session expirée → redirection vers la home
   if (res.status === 401 && !AUTH_PATHS.some((p) => path.startsWith(p))) {
-    // Émet un événement global pour que les composants puissent réagir
+    const apiError = String((data as { error?: string })?.error || '');
+    /** `/me` au chargement : visiteur ou cookie absent / invalide — pas de toast « session expirée ». */
+    if (path.split('?')[0] === '/api/auth/me') {
+      throw new Error(apiError || 'Non authentifié');
+    }
     window.dispatchEvent(new CustomEvent('blindtest:session-expired'));
     throw new Error('Session expirée. Veuillez vous reconnecter.');
   }
