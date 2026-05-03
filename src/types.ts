@@ -151,6 +151,8 @@ export interface GameState {
   }>;
   textAnswers?: TextAnswerSubmission[];
   duelState?: DuelState | null;
+  /** Écran public : overlay « Transition sponsor » entre les pistes (défaut : affiché si absent). */
+  showSponsorRoundTransition?: boolean;
 }
 
 export interface Playlist {

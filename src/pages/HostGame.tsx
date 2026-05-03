@@ -425,6 +425,12 @@ export default function HostGame() {
 
   const isYoutubeMode = !!gameState?.youtubeVideoId;
   const hasQuizStarted = gameState?.status !== 'lobby';
+  const isLastPlaylistTrack =
+    !!gameState &&
+    !isYoutubeMode &&
+    gameState.playlist.length > 0 &&
+    gameState.currentTrackIndex >= gameState.playlist.length - 1;
+  const finishQuizAfterReveal = gameState?.status === 'revealed' && isLastPlaylistTrack;
   const currentTrack = (!isYoutubeMode && gameState)
     ? gameState.playlist[gameState.currentTrackIndex]
     : null;
@@ -1121,6 +1127,25 @@ export default function HostGame() {
             )}
           </div>
           <div className="ml-auto flex items-center gap-2 shrink-0">
+            {!isYoutubeMode && hasQuizStarted && !isSafeMode && (
+              <label className="hidden xl:flex items-center gap-2 text-[11px] text-zinc-400 cursor-pointer select-none max-w-[220px] leading-tight">
+                <input
+                  type="checkbox"
+                  className="rounded border-zinc-600 bg-zinc-900 shrink-0"
+                  checked={gameState.showSponsorRoundTransition !== false}
+                  onChange={(e) => {
+                    socket.emit(
+                      'host:setSponsorRoundTransition',
+                      { gameId, hostToken, show: e.target.checked },
+                      (res: { success?: boolean; error?: string }) => {
+                        if (!res?.success) toastError(res?.error || 'Impossible de mettre à jour l’écran public');
+                      },
+                    );
+                  }}
+                />
+                <span>Overlay « Transition sponsor » entre les pistes</span>
+              </label>
+            )}
             <a
               href={`/screen/${gameState.id}`}
               target="_blank"
@@ -1496,11 +1521,22 @@ export default function HostGame() {
                   <motion.button
                     whileHover={{ scale: 1.015 }}
                     whileTap={{ scale: 0.975 }}
-                    onClick={handleStartTrack}
-                    className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-4 rounded-xl flex items-center justify-center gap-3 font-bold text-lg transition-colors shadow-lg shadow-emerald-500/20"
+                    onClick={finishQuizAfterReveal ? handleNextTrack : handleStartTrack}
+                    className={clsx(
+                      'flex-1 text-white py-4 rounded-xl flex items-center justify-center gap-3 font-bold text-lg transition-colors shadow-lg',
+                      finishQuizAfterReveal
+                        ? 'bg-violet-600 hover:bg-violet-500 shadow-violet-500/25'
+                        : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-500/20',
+                    )}
                   >
-                    <Play className="w-6 h-6" />
-                    {isYoutubeMode ? (gameState.status === 'lobby' ? 'Démarrer' : 'Reprendre') : 'Lancer la musique'}
+                    {finishQuizAfterReveal ? <Flag className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+                    {isYoutubeMode
+                      ? gameState.status === 'lobby'
+                        ? 'Démarrer'
+                        : 'Reprendre'
+                      : finishQuizAfterReveal
+                        ? 'Terminer le quiz'
+                        : 'Lancer la musique'}
                   </motion.button>
                 ) : gameState.status === 'countdown' ? (
                   <div className="flex-1 bg-indigo-600/20 border border-indigo-500/30 text-indigo-200 py-4 rounded-xl flex items-center justify-center gap-3 font-semibold text-lg cursor-not-allowed">
@@ -1547,14 +1583,19 @@ export default function HostGame() {
                 ) : null}
                 {!isYoutubeMode && (
                   <motion.button
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.94 }}
+                    type="button"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
                     onClick={handleNextTrack}
                     disabled={gameState.currentTrackIndex >= gameState.playlist.length - 1}
-                    className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed text-white p-4 rounded-xl transition-colors border border-white/5"
-                    title="Piste suivante"
+                    className="shrink-0 flex items-center justify-center gap-3 min-w-[min(100%,280px)] px-6 py-4 rounded-xl border-2 border-amber-500/40 bg-amber-950/80 hover:bg-amber-900/90 hover:border-amber-400/55 disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-amber-950/80 text-white shadow-lg shadow-amber-950/40 transition-colors"
+                    title="Avance la file : passe à la piste suivante (dernière piste = désactivé)"
                   >
-                    <SkipForward className="w-6 h-6" />
+                    <SkipForward className="w-8 h-8 shrink-0 text-amber-300" aria-hidden />
+                    <span className="text-left leading-snug">
+                      <span className="block font-bold text-lg tracking-tight">Musique suivante</span>
+                      <span className="block text-sm font-medium text-amber-200/85">Passe à la piste suivante dans la playlist</span>
+                    </span>
                   </motion.button>
                 )}
               </motion.div>

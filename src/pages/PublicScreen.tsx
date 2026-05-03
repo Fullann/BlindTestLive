@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, memo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { socket } from '../lib/socket';
 import { GameState, Player } from '../types';
@@ -74,35 +74,6 @@ const Timer = ({ gameState, duration, strictMode }: { gameState: GameState; dura
     </div>
   );
 };
-
-/** Barres audio : tick interne pour ne pas re-render tout l’écran public à chaque frame (évite figements sur TV / navigateur chargé). */
-const BeatBarsVisualizer = memo(function BeatBarsVisualizer() {
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const id = window.setInterval(() => setTick((t) => t + 1), 220);
-    return () => window.clearInterval(id);
-  }, []);
-  const heights = useMemo(
-    () =>
-      Array.from({ length: 16 }, (_, index) => {
-        const wave = Math.sin((tick + index) / 1.6);
-        return Math.max(18, Math.round(42 + wave * 36));
-      }),
-    [tick],
-  );
-  return (
-    <div className="mt-6 flex items-end justify-center gap-1.5 h-16">
-      {heights.map((h, idx) => (
-        <motion.div
-          key={`bar-${idx}`}
-          className="w-2 rounded-full bg-gradient-to-t from-indigo-500/70 via-fuchsia-400/85 to-emerald-300/80"
-          animate={{ height: h }}
-          transition={{ duration: 0.18, ease: 'easeOut' }}
-        />
-      ))}
-    </div>
-  );
-});
 
 // Simple sound synthesizer
 const playSound = (type: 'buzz' | 'correct' | 'wrong') => {
@@ -240,7 +211,21 @@ export default function PublicScreen() {
   }, [branding?.client_name, branding?.logo_url]);
 
   useEffect(() => {
+    if (gameState?.showSponsorRoundTransition === false) {
+      setShowRoundTransition(false);
+      if (roundTransitionTimeoutRef.current) {
+        window.clearTimeout(roundTransitionTimeoutRef.current);
+        roundTransitionTimeoutRef.current = null;
+      }
+    }
+  }, [gameState?.showSponsorRoundTransition]);
+
+  useEffect(() => {
     if (!gameState || gameState.youtubeVideoId) return;
+    if (gameState.showSponsorRoundTransition === false) {
+      prevTrackIndexRef.current = gameState.currentTrackIndex;
+      return;
+    }
     const currentIdx = gameState.currentTrackIndex;
     const prevIdx = prevTrackIndexRef.current;
     if (prevIdx !== null && currentIdx !== prevIdx) {
@@ -521,14 +506,7 @@ export default function PublicScreen() {
                 exit={{ opacity: 0, y: -50 }}
                 className="text-center w-full max-w-4xl mx-auto"
               >
-                {isYoutubeMode ? (
-                  <div className="mb-8 rounded-2xl p-12 shadow-2xl border-4 border-indigo-500/30 bg-zinc-900/80 backdrop-blur-sm w-full max-w-5xl mx-auto min-h-[200px] flex flex-col justify-center">
-                    <p className="text-3xl font-semibold text-center">Lecture en cours…</p>
-                    <p className="text-zinc-400 mt-6 text-center text-lg">
-                      La vidéo YouTube est diffusée depuis la régie
-                    </p>
-                  </div>
-                ) : currentTrack?.mediaType === 'image' && currentTrack.mediaUrl ? (
+                {isYoutubeMode ? null : currentTrack?.mediaType === 'image' && currentTrack.mediaUrl ? (
                   <div className="mb-8 rounded-2xl overflow-hidden shadow-2xl border-4 border-indigo-500/30">
                     <img
                       src={currentTrack.mediaUrl}
@@ -553,14 +531,7 @@ export default function PublicScreen() {
                       }}
                     />
                   </div>
-                ) : currentTrack?.mediaType === 'youtube' && currentTrack.mediaUrl ? (
-                  <div className="mb-8 rounded-2xl p-12 shadow-2xl border-4 border-indigo-500/30 bg-zinc-900/80 backdrop-blur-sm w-full max-w-5xl mx-auto min-h-[200px] flex flex-col justify-center">
-                    <p className="text-3xl font-semibold text-center">Lecture en cours…</p>
-                    <p className="text-zinc-400 mt-6 text-center text-lg">
-                      Source privée animateur
-                    </p>
-                  </div>
-                ) : currentTrack?.mediaType === 'text' && currentTrack.textContent ? (
+                ) : currentTrack?.mediaType === 'youtube' && currentTrack.mediaUrl ? null : currentTrack?.mediaType === 'text' && currentTrack.textContent ? (
                   <div className="mb-8 rounded-2xl p-12 shadow-2xl border-4 border-indigo-500/30 bg-zinc-900/80 backdrop-blur-sm">
                     <p className="text-4xl font-medium leading-relaxed">{currentTrack.textContent}</p>
                   </div>
@@ -593,12 +564,6 @@ export default function PublicScreen() {
                     strictMode={Boolean(gameState.strictTimerEnabled)}
                   />
                 )}
-                {gameState.status === 'playing' &&
-                  !isYoutubeMode &&
-                  currentTrack?.mediaType !== 'youtube' &&
-                  currentTrack?.mediaType !== 'image' &&
-                  currentTrack?.mediaType !== 'video' &&
-                  currentTrack?.mediaType !== 'text' && <BeatBarsVisualizer />}
               </motion.div>
             )}
 

@@ -218,6 +218,12 @@ const hostUpdateDeviceProfileSchema = z.object({
   soundStyle: z.enum(["default", "arcade", "soft"]).optional(),
 });
 
+const hostSetSponsorRoundTransitionSchema = z.object({
+  gameId: z.string().min(1).max(10),
+  hostToken: z.string().min(10).max(200),
+  show: z.boolean(),
+});
+
 const hostCreateOptionsSchema = z.object({
   isTeamMode: z.boolean().optional(),
   shuffleQuestions: z.boolean().optional(),
@@ -858,6 +864,25 @@ export function registerHostHandlers(ctx: SocketHandlerContext) {
     } else {
       callback({ success: false, error: "Permission refusée" });
     }
+  });
+
+  socket.on("host:setSponsorRoundTransition", (rawPayload, callback: Ack) => {
+    const parsed = hostSetSponsorRoundTransitionSchema.safeParse(rawPayload);
+    if (!parsed.success) {
+      return callback({ success: false, error: "Payload invalide" });
+    }
+    const { gameId, hostToken, show } = parsed.data;
+    const game = ctx.activeGames[gameId];
+    const role = game ? ctx.getHostRole(game, hostToken) : null;
+    if (!game || !ctx.hasPermission(role, "control")) {
+      return callback({ success: false, error: "Permission refusée" });
+    }
+    game.showSponsorRoundTransition = show;
+    game.lastActivity = Date.now();
+    ctx.persistGame(game);
+    ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
+    logEvent(game, ctx, gameId, "screen_option", show ? "Transition sponsor écran public : activée" : "Transition sponsor écran public : désactivée");
+    callback({ success: true });
   });
 
   socket.on("host:reorderTrack", (rawPayload, callback: Ack) => {

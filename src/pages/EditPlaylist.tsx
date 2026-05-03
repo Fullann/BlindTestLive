@@ -23,6 +23,30 @@ function extractYoutubeId(url: string): string | null {
   return match ? match[1] : null;
 }
 
+/** Décompose startTime (secondes stockées / API YouTube) en h, min, s */
+function splitStartTimeSeconds(totalSec: number): { h: number; m: number; s: number } {
+  const t = Math.max(0, Math.floor(Number.isFinite(totalSec) ? totalSec : 0));
+  return {
+    h: Math.floor(t / 3600),
+    m: Math.floor((t % 3600) / 60),
+    s: t % 60,
+  };
+}
+
+function combineStartTimeSeconds(h: number, m: number, s: number): number {
+  const hi = Math.max(0, Math.floor(Number.isFinite(h) ? h : 0));
+  const mi = Math.max(0, Math.floor(Number.isFinite(m) ? m : 0));
+  const si = Math.max(0, Math.floor(Number.isFinite(s) ? s : 0));
+  return hi * 3600 + mi * 60 + si;
+}
+
+function formatStartTimeReadable(totalSec: number): string {
+  const { h, m, s } = splitStartTimeSeconds(totalSec);
+  if (h > 0) return `${h}h ${m}min ${s}s`;
+  if (m > 0) return `${m}min ${s}s`;
+  return `${s}s`;
+}
+
 function toYouTubeEmbed(url: string): string {
   const id = extractYoutubeId(url) || url;
   return `https://www.youtube.com/embed/${id}?autoplay=1`;
@@ -728,6 +752,14 @@ export default function EditPlaylist() {
             // previewSrc includes the local blob URL so the uploader sees a preview immediately
             const previewSrc = localPreviewUrls[`${track.id}:media`] || sourceUrl;
             const answerPreviewSrc = localPreviewUrls[`${track.id}:answer`] || (track.answerImageUrl || '');
+            const startHms = splitStartTimeSeconds(track.startTime ?? 0);
+            const setTrackStartTime = (nextH: number, nextM: number, nextS: number) =>
+              updateTrack(track.id, { startTime: combineStartTimeSeconds(nextH, nextM, nextS) });
+            const parseStartUnit = (v: string) => {
+              if (v === '') return 0;
+              const n = parseInt(v, 10);
+              return Number.isNaN(n) ? 0 : Math.max(0, n);
+            };
 
             return (
               <div key={track.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 group app-card">
@@ -819,27 +851,57 @@ export default function EditPlaylist() {
                         </div>
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-zinc-400 mb-1">Timing de l'extrait</label>
-                        <div className="flex gap-2">
-                          <div className="flex-1">
-                            <input
-                              type="number"
-                              value={track.startTime ?? 0}
-                              onChange={(e) => updateTrack(track.id, { startTime: parseInt(e.target.value, 10) || 0 })}
-                              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
-                              min="0"
-                              placeholder="Début extrait (s)"
-                              title="Début extrait (secondes)"
-                            />
+                        <label className="block text-xs font-medium text-zinc-400 mb-1">Timing de l&apos;extrait</label>
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <label className="block text-[10px] text-zinc-500 mb-0.5">Heures</label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={startHms.h}
+                                onChange={(e) => setTrackStartTime(parseStartUnit(e.target.value), startHms.m, startHms.s)}
+                                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                                title="Heures depuis le début de la vidéo"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-zinc-500 mb-0.5">Minutes</label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={startHms.m}
+                                onChange={(e) => setTrackStartTime(startHms.h, parseStartUnit(e.target.value), startHms.s)}
+                                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                                title="Minutes"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-zinc-500 mb-0.5">Secondes</label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={startHms.s}
+                                onChange={(e) => setTrackStartTime(startHms.h, startHms.m, parseStartUnit(e.target.value))}
+                                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                                title="Secondes"
+                              />
+                            </div>
                           </div>
-                          <div className="flex-1">
+                          <p className="text-[10px] text-zinc-500 leading-snug">
+                            Enregistré en secondes pour la lecture (YouTube, audio, vidéo). Total :{' '}
+                            <span className="text-zinc-400 font-medium">{track.startTime ?? 0}s</span>
+                            {` (${formatStartTimeReadable(track.startTime ?? 0)})`}
+                          </p>
+                          <div>
+                            <label className="block text-[10px] text-zinc-500 mb-0.5">Durée de la manche (s)</label>
                             <input
                               type="number"
                               value={track.duration || 30}
-                              onChange={(e) => updateTrack(track.id, { duration: parseInt(e.target.value) || 30 })}
+                              onChange={(e) => updateTrack(track.id, { duration: parseInt(e.target.value, 10) || 30 })}
                               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
-                              min="5"
-                              max="300"
+                              min={5}
+                              max={300}
                               placeholder="Durée (s)"
                               title="Durée (secondes)"
                             />
@@ -871,7 +933,9 @@ export default function EditPlaylist() {
                             placeholder="https://www.youtube.com/watch?v=... ou https://youtu.be/..."
                           />
                           <p className="text-xs text-zinc-500">
-                            L'extrait YouTube démarrera à <span className="text-zinc-300 font-medium">{track.startTime ?? 0}s</span>.
+                            L&apos;extrait YouTube démarrera à{' '}
+                            <span className="text-zinc-300 font-medium">{formatStartTimeReadable(track.startTime ?? 0)}</span>
+                            <span className="text-zinc-600"> ({track.startTime ?? 0}s)</span>.
                           </p>
                           {sourceUrl && extractYoutubeId(sourceUrl) && (
                             <div className="space-y-2">
