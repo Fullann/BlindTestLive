@@ -518,6 +518,12 @@ export default function HostGame() {
     fadeHostAudioTo,
   ]);
 
+  /** Toujours déclaré avant tout return — sinon #310 au passage loading → partie chargée. */
+  const playersSortedByScore = useMemo(() => {
+    if (!gameState) return [] as Player[];
+    return [...(Object.values(gameState.players) as Player[])].sort((a, b) => b.score - a.score);
+  }, [gameState]);
+
   if (!gameState) {
     return (
       <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center gap-5">
@@ -1034,10 +1040,6 @@ export default function HostGame() {
   };
 
   const playersList = Object.values(gameState.players) as Player[];
-  const playersSortedByScore = useMemo(
-    () => [...playersList].sort((a, b) => b.score - a.score),
-    [playersList],
-  );
   const totalBuzzes = playersList.reduce((acc, current) => acc + (current.stats?.buzzes || 0), 0);
   const totalCorrect = playersList.reduce((acc, current) => acc + (current.stats?.correctAnswers || 0), 0);
   const totalWrong = playersList.reduce((acc, current) => acc + (current.stats?.wrongAnswers || 0), 0);
