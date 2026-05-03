@@ -1390,13 +1390,17 @@ export default function HostGame() {
                           <Music className={clsx('w-7 h-7', gameState.status === 'playing' && 'animate-pulse')} />
                         </div>
                         <div>
-                          <p className="text-xs text-zinc-500 uppercase tracking-widest font-bold mb-1">Question en cours</p>
-                          <h2 className="text-2xl font-bold text-zinc-500 italic">Titre masqué</h2>
+                          {currentTrack?.title && (
+                            <h2 className="text-2xl font-bold text-zinc-100 tracking-tight">{currentTrack.title}</h2>
+                          )}
+                          {currentTrack?.artist && (
+                            <p className="text-lg text-zinc-400 font-medium mt-0.5">{currentTrack.artist}</p>
+                          )}
                           {gameState.status === 'playing' && (
-                            <p className="text-xs text-emerald-500/70 mt-0.5">Musique en cours de lecture…</p>
+                            <p className="text-xs text-emerald-500/70 mt-1.5">Musique en cours de lecture…</p>
                           )}
                           {gameState.status === 'paused' && (
-                            <p className="text-xs text-orange-500/70 mt-0.5">En attente de la réponse…</p>
+                            <p className="text-xs text-orange-500/70 mt-1.5">En attente de la réponse…</p>
                           )}
                         </div>
                       </motion.div>

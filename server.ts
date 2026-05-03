@@ -26,6 +26,11 @@ import playerProfilesRouter from "./server/routes/player-profiles";
 import { redactAuditPayload } from "./server/redactSecrets";
 
 const PORT = Number(process.env.PORT || 5174);
+/** Fenêtre 60s : au-delà, nouvelles connexions socket depuis la même IP sont refusées (NAT événement = même IP publique). */
+const SOCKET_MAX_CONN_PER_IP_PER_MINUTE = Math.max(
+  20,
+  Number(process.env.SOCKET_MAX_CONN_PER_IP_PER_MINUTE || 80),
+);
 const DATA_DIR = path.resolve(process.cwd(), "data");
 const GAMES_FILE = path.join(DATA_DIR, "games.json");
 const METRICS_TOKEN = process.env.METRICS_TOKEN || "";
@@ -179,7 +184,7 @@ function isIpAllowed(ip: string): boolean {
   }
   current.count += 1;
   ipConnectionCounters.set(ip, current);
-  return current.count <= 80;
+  return current.count <= SOCKET_MAX_CONN_PER_IP_PER_MINUTE;
 }
 
 function generateGameCode(): string {
@@ -450,6 +455,9 @@ async function startServer() {
       },
       credentials: true,
     },
+    // Moins de surprises derrière certains reverse proxies (compression WS).
+    perMessageDeflate: false,
+    connectTimeout: 45_000,
   });
   const devicesNamespace = io.of("/devices");
 

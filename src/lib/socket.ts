@@ -3,13 +3,30 @@ import { io } from "socket.io-client";
 const host = typeof window !== "undefined" ? window.location.hostname : "";
 const isProdSharedHost = host === "blindtestlive.fullann.ch";
 
+/**
+ * Déploiement multi-instances : Socket.IO en polling exige une affinité de session (sticky)
+ * sur `/socket.io/` sinon le POST avec `sid` part sur un autre pod → 400 + reconnexions en boucle.
+ * 503 = proxy / LB sans backend sain ou timeout.
+ *
+ * `VITE_SOCKET_USE_WEBSOCKET=true` : tente WebSocket en premier (moins de requêtes HTTP ; à valider si le WAF ne casse pas l’upgrade).
+ * `VITE_SOCKET_POLLING_ONLY=true` : force le polling partout (utile si WS impossible).
+ */
+const viteEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+const forcePolling =
+  viteEnv?.VITE_SOCKET_POLLING_ONLY === "true" ||
+  (isProdSharedHost && viteEnv?.VITE_SOCKET_USE_WEBSOCKET !== "true");
+/** Hors « polling only », même ordre qu’avant : polling puis upgrade WebSocket si activé. */
+const transports = forcePolling
+  ? (["polling"] as const)
+  : (["polling", "websocket"] as const);
+
 // Connect to the same host that serves the app
 export const socket = io("/", {
   autoConnect: true,
-  // On fullann shared host, websocket frames are sometimes altered by proxy/WAF.
-  // Keep polling-only there to avoid broken WS upgrade loops.
-  transports: isProdSharedHost ? ["polling"] : ["polling", "websocket"],
-  upgrade: !isProdSharedHost,
+  path: "/socket.io/",
+  withCredentials: true,
+  transports: [...transports],
+  upgrade: !forcePolling,
   reconnection: true,
   reconnectionAttempts: Infinity,
   // Soften reconnect storms that can trigger anti-bot protections.

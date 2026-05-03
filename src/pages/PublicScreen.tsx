@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { useParams } from 'react-router-dom';
 import { socket } from '../lib/socket';
 import { GameState, Player } from '../types';
@@ -75,6 +75,35 @@ const Timer = ({ gameState, duration, strictMode }: { gameState: GameState; dura
   );
 };
 
+/** Barres audio : tick interne pour ne pas re-render tout l’écran public à chaque frame (évite figements sur TV / navigateur chargé). */
+const BeatBarsVisualizer = memo(function BeatBarsVisualizer() {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((t) => t + 1), 220);
+    return () => window.clearInterval(id);
+  }, []);
+  const heights = useMemo(
+    () =>
+      Array.from({ length: 16 }, (_, index) => {
+        const wave = Math.sin((tick + index) / 1.6);
+        return Math.max(18, Math.round(42 + wave * 36));
+      }),
+    [tick],
+  );
+  return (
+    <div className="mt-6 flex items-end justify-center gap-1.5 h-16">
+      {heights.map((h, idx) => (
+        <motion.div
+          key={`bar-${idx}`}
+          className="w-2 rounded-full bg-gradient-to-t from-indigo-500/70 via-fuchsia-400/85 to-emerald-300/80"
+          animate={{ height: h }}
+          transition={{ duration: 0.18, ease: 'easeOut' }}
+        />
+      ))}
+    </div>
+  );
+});
+
 // Simple sound synthesizer
 const playSound = (type: 'buzz' | 'correct' | 'wrong') => {
   try {
@@ -129,20 +158,30 @@ export default function PublicScreen() {
   const [sponsorSlideIndex, setSponsorSlideIndex] = useState(0);
   const [showRoundTransition, setShowRoundTransition] = useState(false);
   const [roundTransitionLabel, setRoundTransitionLabel] = useState('');
-  const [beatTick, setBeatTick] = useState(0);
 
   useEffect(() => {
     if (!gameId) return;
+
+    const requestFreshState = () => {
+      socket.emit('game:requestState', { gameId, asScreen: true }, () => {});
+    };
 
     const joinAsScreen = () => socket.emit('screen:joinGame', gameId, (response: any) => {
       if (!response.success) {
         console.error("Failed to join game screen");
         return;
       }
-      socket.emit('game:requestState', { gameId, asScreen: true }, () => {});
+      requestFreshState();
     });
     joinAsScreen();
     socket.on('connect', joinAsScreen);
+
+    /** Retour navigateur / onglet : l’état peut être stale si des `game:stateUpdate` ont été manqués. */
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible' || !socket.connected) return;
+      requestFreshState();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
 
     const handleStateUpdate = (state: GameState) => {
       setGameState(state);
@@ -182,6 +221,7 @@ export default function PublicScreen() {
     socket.on('game:stateUpdate', handleStateUpdate);
 
     return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
       socket.off('game:stateUpdate', handleStateUpdate);
       socket.off('connect', joinAsScreen);
     };
@@ -226,14 +266,6 @@ export default function PublicScreen() {
       }
     };
   }, []);
-
-  useEffect(() => {
-    if (!gameState || gameState.status !== 'playing') return;
-    const interval = window.setInterval(() => {
-      setBeatTick((prev) => prev + 1);
-    }, 180);
-    return () => window.clearInterval(interval);
-  }, [gameState?.status, gameState]);
 
   useEffect(() => {
     if (!gameId) return;
@@ -317,15 +349,11 @@ export default function PublicScreen() {
   const sponsorSlides = [
     branding?.client_name ? `Événement ${branding.client_name}` : 'Événement BlindTestLive',
     'Merci à notre sponsor',
-    `Palette: ${primaryColor} · ${accentColor}`,
+    'Merci d’être avec nous',
   ];
   const isPreGame = gameState.status === 'lobby' || gameState.status === 'onboarding' || gameState.status === 'countdown';
   const qrSize = isPreGame ? 220 : 80;
   const ledHeadlineClass = 'font-black uppercase tracking-[0.06em] [text-shadow:0_0_16px_rgba(99,102,241,0.35)]';
-  const visualizerBars = Array.from({ length: 16 }, (_, index) => {
-    const wave = Math.sin((beatTick + index) / 1.6);
-    return Math.max(18, Math.round(42 + wave * 36));
-  });
   const showSponsorOverlay = Boolean(branding?.client_name || branding?.logo_url) && (
     gameState.status === 'lobby' ||
     gameState.status === 'onboarding' ||
@@ -362,16 +390,6 @@ export default function PublicScreen() {
               >
                 {gameState.id}
               </span>
-            </div>
-            <div className="flex items-center gap-3 mt-3">
-              <div className="inline-flex items-center gap-2 bg-black/25 border border-white/10 rounded-full px-3 py-1.5">
-                <span className="w-3 h-3 rounded-full border border-white/40" style={{ backgroundColor: primaryColor }} />
-                <span className="text-xs text-zinc-200 font-mono">{primaryColor}</span>
-              </div>
-              <div className="inline-flex items-center gap-2 bg-black/25 border border-white/10 rounded-full px-3 py-1.5">
-                <span className="w-3 h-3 rounded-full border border-white/40" style={{ backgroundColor: accentColor }} />
-                <span className="text-xs text-zinc-200 font-mono">{accentColor}</span>
-              </div>
             </div>
           </div>
         </div>
@@ -503,7 +521,14 @@ export default function PublicScreen() {
                 exit={{ opacity: 0, y: -50 }}
                 className="text-center w-full max-w-4xl mx-auto"
               >
-                {currentTrack?.mediaType === 'image' && currentTrack.mediaUrl ? (
+                {isYoutubeMode ? (
+                  <div className="mb-8 rounded-2xl p-12 shadow-2xl border-4 border-indigo-500/30 bg-zinc-900/80 backdrop-blur-sm w-full max-w-5xl mx-auto min-h-[200px] flex flex-col justify-center">
+                    <p className="text-3xl font-semibold text-center">Lecture en cours…</p>
+                    <p className="text-zinc-400 mt-6 text-center text-lg">
+                      La vidéo YouTube est diffusée depuis la régie
+                    </p>
+                  </div>
+                ) : currentTrack?.mediaType === 'image' && currentTrack.mediaUrl ? (
                   <div className="mb-8 rounded-2xl overflow-hidden shadow-2xl border-4 border-indigo-500/30">
                     <img
                       src={currentTrack.mediaUrl}
@@ -529,25 +554,9 @@ export default function PublicScreen() {
                     />
                   </div>
                 ) : currentTrack?.mediaType === 'youtube' && currentTrack.mediaUrl ? (
-                  <div className="mb-8 rounded-2xl p-12 shadow-2xl border-4 border-indigo-500/30 bg-zinc-900/80 backdrop-blur-sm w-full max-w-5xl mx-auto min-h-[320px] flex flex-col justify-center">
-                    <p className="text-3xl font-semibold text-center mb-10">Lecture en cours...</p>
-                    <div className="flex items-end justify-center gap-3 h-44">
-                      {[0, 1, 2, 3, 4, 5, 6].map((bar) => (
-                        <motion.div
-                          key={bar}
-                          className="w-5 rounded-full bg-gradient-to-t from-indigo-500 to-fuchsia-400"
-                          initial={{ height: 20 }}
-                          animate={{ height: [20, 120, 48, 156, 34, 110, 20] }}
-                          transition={{
-                            duration: 1.2,
-                            repeat: Infinity,
-                            ease: 'easeInOut',
-                            delay: bar * 0.08,
-                          }}
-                        />
-                      ))}
-                    </div>
-                    <p className="text-zinc-400 mt-8 text-center text-lg">
+                  <div className="mb-8 rounded-2xl p-12 shadow-2xl border-4 border-indigo-500/30 bg-zinc-900/80 backdrop-blur-sm w-full max-w-5xl mx-auto min-h-[200px] flex flex-col justify-center">
+                    <p className="text-3xl font-semibold text-center">Lecture en cours…</p>
+                    <p className="text-zinc-400 mt-6 text-center text-lg">
                       Source privée animateur
                     </p>
                   </div>
@@ -556,16 +565,19 @@ export default function PublicScreen() {
                     <p className="text-4xl font-medium leading-relaxed">{currentTrack.textContent}</p>
                   </div>
                 ) : (
-                  <div className="w-48 h-48 bg-zinc-900 rounded-full flex items-center justify-center mx-auto mb-12 border-4 border-indigo-500/30 relative">
-                    <div className="absolute inset-0 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin"></div>
+                  <div className="w-48 h-48 bg-zinc-900 rounded-full flex items-center justify-center mx-auto mb-12 border-4 border-indigo-500/30">
                     <Music className="w-20 h-20 text-indigo-400" />
                   </div>
                 )}
                 
                 <h1 className={`text-7xl tracking-tight italic text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400 ${ledHeadlineClass}`}>
-                  {currentTrack?.mediaType === 'image' ? 'Regardez bien...' : 
-                   currentTrack?.mediaType === 'text' ? 'Lisez bien...' : 
-                   'Écoutez bien...'}
+                  {isYoutubeMode
+                    ? 'YouTube'
+                    : currentTrack?.mediaType === 'image'
+                      ? 'Regardez bien...'
+                      : currentTrack?.mediaType === 'text'
+                        ? 'Lisez bien...'
+                        : 'Écoutez bien...'}
                 </h1>
                 {currentTrack?.mediaType === 'image' && currentTrack?.visualHint && (
                   <p className="mt-5 text-2xl text-zinc-300">{currentTrack.visualHint}</p>
@@ -581,18 +593,12 @@ export default function PublicScreen() {
                     strictMode={Boolean(gameState.strictTimerEnabled)}
                   />
                 )}
-                {gameState.status === 'playing' && (
-                  <div className="mt-6 flex items-end justify-center gap-1.5 h-16">
-                    {visualizerBars.map((h, idx) => (
-                      <motion.div
-                        key={`bar-${idx}`}
-                        className="w-2 rounded-full bg-gradient-to-t from-indigo-500/70 via-fuchsia-400/85 to-emerald-300/80"
-                        animate={{ height: h }}
-                        transition={{ duration: 0.16, ease: 'easeOut' }}
-                      />
-                    ))}
-                  </div>
-                )}
+                {gameState.status === 'playing' &&
+                  !isYoutubeMode &&
+                  currentTrack?.mediaType !== 'youtube' &&
+                  currentTrack?.mediaType !== 'image' &&
+                  currentTrack?.mediaType !== 'video' &&
+                  currentTrack?.mediaType !== 'text' && <BeatBarsVisualizer />}
               </motion.div>
             )}
 
@@ -727,7 +733,6 @@ export default function PublicScreen() {
                   .map(([teamId, score], index) => (
                     <motion.div 
                       key={teamId}
-                      layout
                       initial={{ opacity: 0, x: 50 }}
                       animate={{ opacity: 1, x: 0 }}
                       className="bg-zinc-950 border border-white/5 p-6 rounded-2xl flex items-center justify-between"
@@ -749,7 +754,6 @@ export default function PublicScreen() {
                   .map((player, index) => (
                   <motion.div 
                     key={player.id}
-                    layout
                     initial={{ opacity: 0, x: 50 }}
                     animate={{ opacity: 1, x: 0 }}
                     className="bg-zinc-950 border border-white/5 p-6 rounded-2xl flex items-center justify-between"
