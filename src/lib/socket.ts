@@ -29,11 +29,12 @@ export const socket = io("/", {
   upgrade: !forcePolling,
   reconnection: true,
   reconnectionAttempts: Infinity,
-  // Soften reconnect storms that can trigger anti-bot protections.
-  reconnectionDelay: 2500,
-  reconnectionDelayMax: 30000,
-  randomizationFactor: 0.5,
-  timeout: 20000,
+  // Reconnexion rapide après une coupure courte (réseau mobile, veille écran).
+  // Le backoff évite de saturer le serveur en cas de panne prolongée.
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 10000,
+  randomizationFactor: 0.3,
+  timeout: 15000,
 });
 
 type SocketConnectionState = {
@@ -57,8 +58,32 @@ function emitSocketState(partial: Partial<SocketConnectionState>) {
   window.dispatchEvent(new CustomEvent("blindtest:socket-state", { detail: next }));
 }
 
+// ── Watchdog : détecte une connexion "gelée" ──────────────────────────────────
+// o2switch (et certains WAF) peut couper silencieusement les requêtes polling
+// sans envoyer de FIN TCP → socket.connected reste true mais plus rien ne passe.
+// On surveille l'horodatage du dernier trafic reçu ; si le socket est connecté
+// mais muet depuis plus longtemps que pingInterval + pingTimeout + marge, on force
+// un cycle disconnect/connect pour briser l'état gelé.
+let lastActivityAt = Date.now();
+
+// Tout événement entrant (y compris les pings moteur internes) remet le compteur à zéro.
+socket.onAny(() => {
+  lastActivityAt = Date.now();
+});
+
+// pingInterval(10 s) + pingTimeout(15 s) + marge(15 s) = 40 s
+const WATCHDOG_IDLE_MS = 40_000;
+
+function forceReconnect(reason: string) {
+  console.warn(`[socket] ${reason} — reconnexion forcée`);
+  emitSocketState({ connected: false, reconnecting: true, lastError: reason });
+  socket.disconnect();
+  socket.connect();
+}
+
 let lastLoggedErrorAt = 0;
 socket.on("connect", () => {
+  lastActivityAt = Date.now();
   emitSocketState({
     connected: true,
     reconnecting: false,
@@ -107,7 +132,6 @@ socket.io.on("reconnect_failed", () => {
   });
 });
 
-// Retry silently when the tab becomes active again (no manual refresh needed).
 if (typeof window !== "undefined") {
   emitSocketState({
     connected: socket.connected,
@@ -115,12 +139,34 @@ if (typeof window !== "undefined") {
     transport: socket.io.engine?.transport?.name || null,
     lastError: null,
   });
+
+  // Watchdog : vérifie toutes les 15 s si le socket est gelé.
+  setInterval(() => {
+    if (!socket.connected) return;
+    const idle = Date.now() - lastActivityAt;
+    if (idle > WATCHDOG_IDLE_MS) {
+      forceReconnect(`connexion gelée (${Math.round(idle / 1000)} s sans trafic)`);
+    }
+  }, 15_000);
+
   window.addEventListener("online", () => {
     if (!socket.connected) socket.connect();
   });
+
   window.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && !socket.connected) socket.connect();
+    if (document.visibilityState !== "visible") return;
+    if (!socket.connected) {
+      socket.connect();
+      return;
+    }
+    // L'onglet vient de reprendre : si le socket semble connecté mais n'a pas eu
+    // de trafic depuis trop longtemps (mise en veille / WAF), forcer un cycle.
+    const idle = Date.now() - lastActivityAt;
+    if (idle > WATCHDOG_IDLE_MS) {
+      forceReconnect(`onglet réactivé après ${Math.round(idle / 1000)} s d'inactivité`);
+    }
   });
+
   window.addEventListener("pageshow", () => {
     if (!socket.connected) socket.connect();
   });

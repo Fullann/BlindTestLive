@@ -136,7 +136,11 @@ export function registerPlayerHandlers(ctx: SocketHandlerContext) {
       if (sanitizedTeam) game.players[playerId].team = sanitizedTeam;
       game.players[playerId].stats = game.players[playerId].stats || { buzzes: 0, correctAnswers: 0, wrongAnswers: 0 };
       game.players[playerId].deviceType = game.players[playerId].buzzerDeviceId ? "esp32" : "mobile";
+      game.players[playerId].isOnline = true;
+      game.players[playerId].disconnectedAt = undefined;
 
+      socket.data.playerGameId = gameId;
+      socket.data.playerId = playerId;
       socket.join(gameId);
       game.lastActivity = Date.now();
       persistGame(game);
@@ -162,9 +166,12 @@ export function registerPlayerHandlers(ctx: SocketHandlerContext) {
       deviceType: "mobile",
     };
 
+    newPlayer.isOnline = true;
     game.players[newPlayerId] = newPlayer;
     game.lastActivity = Date.now();
     persistGame(game);
+    socket.data.playerGameId = gameId;
+    socket.data.playerId = newPlayerId;
     socket.join(gameId);
     callback({ success: true, player: newPlayer });
     pushGameLog(gameId, "player_join", `${newPlayer.name} rejoint la partie`);
@@ -349,5 +356,23 @@ export function registerPlayerHandlers(ctx: SocketHandlerContext) {
     const ok = await relayPlayerMicToHost(ctx, gameId, targetHostSocketId, "player:micStopped", { playerId });
     if (!ok) return callback({ success: false, error: "Animateur introuvable pour le micro" });
     callback({ success: true });
+  });
+
+  socket.on("disconnect", () => {
+    const gameId = socket.data.playerGameId as string | undefined;
+    const playerId = socket.data.playerId as string | undefined;
+    if (!gameId || !playerId) return;
+
+    const game = activeGames[gameId];
+    if (!game) return;
+    const player = game.players[playerId];
+    // Ne marquer offline que si ce socket est bien le socket actuel du joueur
+    // (évite d'écraser une reconnexion rapide)
+    if (!player || player.socketId !== socket.id) return;
+
+    player.isOnline = false;
+    player.disconnectedAt = Date.now();
+    persistGame(game);
+    ctx.io.to(gameId).emit("game:stateUpdate", sanitizeGameState(game));
   });
 }

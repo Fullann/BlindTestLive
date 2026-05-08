@@ -49,6 +49,8 @@ export interface Player {
   buzzerDeviceId?: string;
   eventPowerDoubleNext?: boolean;
   frozenUntil?: number;
+  isOnline?: boolean;
+  disconnectedAt?: number;
 }
 
 export interface TeamConfig {

@@ -457,7 +457,11 @@ async function startServer() {
     },
     // Moins de surprises derrière certains reverse proxies (compression WS).
     perMessageDeflate: false,
-    connectTimeout: 45_000,
+    connectTimeout: 30_000,
+    // Détection de coupure plus rapide : ping toutes les 10 s, timeout après 15 s.
+    // Valeurs par défaut Socket.IO : 25 s / 20 s → délai total ~45 s avant de voir un joueur déco.
+    pingInterval: 10_000,
+    pingTimeout: 15_000,
   });
   const devicesNamespace = io.of("/devices");
 
