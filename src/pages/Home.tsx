@@ -72,7 +72,7 @@ const MODES: Array<{
 ];
 
 export default function Home() {
-  const { register } = useAuth();
+  const { register, refreshUser } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -269,6 +269,9 @@ export default function Home() {
         const result = await api.auth.login(adminEmail, adminPassword);
         if (result.requiresTwoFactor) { setAdminNeedsTwoFactor(true); return; }
         if (!result.user) throw new Error('Connexion impossible');
+        // Synchroniser le contexte d'auth avant la navigation pour éviter
+        // que AdminDashboard voie user===null et redirige vers l'accueil.
+        await refreshUser();
       } else {
         await register(adminEmail, adminPassword);
       }

@@ -453,6 +453,14 @@ export default function PublicScreen() {
                 <Music className="w-32 h-32 text-indigo-500/50 mx-auto mb-8 animate-pulse" />
                 <h1 className="text-6xl font-bold tracking-tight mb-4">En attente de joueurs</h1>
                 <p className="text-2xl text-zinc-400">Scannez le QR code pour rejoindre !</p>
+                {gameState.onboardingEnabled && (
+                  <div className="mt-10 bg-zinc-900/85 border border-white/10 rounded-3xl p-8 max-w-3xl mx-auto text-left space-y-3">
+                    <p className="text-center text-xl font-semibold text-indigo-300 mb-4">Comment jouer</p>
+                    <p className="text-zinc-300 text-xl">1. Rejoins avec le QR code ou le code partie</p>
+                    <p className="text-zinc-300 text-xl">2. Appuie sur <span className="font-bold text-white">BUZZ</span> dès que tu reconnais la musique</p>
+                    <p className="text-zinc-300 text-xl">3. L&apos;animateur valide et les points s&apos;ajoutent</p>
+                  </div>
+                )}
               </motion.div>
             )}
 

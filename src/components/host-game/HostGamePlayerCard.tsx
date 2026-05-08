@@ -13,6 +13,7 @@ export type HostGamePlayerCardProps = {
   onApplyPower: (power: 'x2' | 'freeze' | 'comeback', playerId: string) => void;
   onUnlock: (playerId: string) => void;
   onKick: (playerId: string) => void;
+  onAdjustScore: (playerId: string, delta: number) => void;
 };
 
 function teamName(gameState: GameState, teamId: string) {
@@ -35,6 +36,7 @@ export function HostGamePlayerCard({
   onApplyPower,
   onUnlock,
   onKick,
+  onAdjustScore,
 }: HostGamePlayerCardProps) {
   return (
     <div
@@ -122,7 +124,30 @@ export function HostGamePlayerCard({
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0 ml-2">
-        <span className="font-mono font-bold text-sm">{player.score}</span>
+        {hostRole === 'owner' && !isSafeMode && (
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => onAdjustScore(player.id, -1)}
+              className="w-5 h-5 flex items-center justify-center rounded bg-zinc-800 hover:bg-red-900/60 hover:text-red-300 text-zinc-400 text-xs font-bold transition-colors"
+              title="Retirer 1 point"
+            >
+              −
+            </button>
+            <span className="font-mono font-bold text-sm w-7 text-center">{player.score}</span>
+            <button
+              type="button"
+              onClick={() => onAdjustScore(player.id, 1)}
+              className="w-5 h-5 flex items-center justify-center rounded bg-zinc-800 hover:bg-emerald-900/60 hover:text-emerald-300 text-zinc-400 text-xs font-bold transition-colors"
+              title="Ajouter 1 point"
+            >
+              +
+            </button>
+          </div>
+        )}
+        {(hostRole !== 'owner' || isSafeMode) && (
+          <span className="font-mono font-bold text-sm">{player.score}</span>
+        )}
         {hostRole === 'owner' && !isSafeMode && (
           <div className="relative">
             {playerToKick === player.id ? (

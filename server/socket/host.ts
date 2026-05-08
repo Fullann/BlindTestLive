@@ -630,30 +630,11 @@ export function registerHostHandlers(ctx: SocketHandlerContext) {
         currentTrackStat.trackId = track?.id || currentTrackStat.trackId;
       }
       logEvent(game, ctx, gameId, "track_start", "Manche démarrée");
-      if (game.status === "lobby" && game.onboardingEnabled) {
-        game.status = "onboarding";
-        game.countdown = game.tutorialSeconds || 10;
-        ctx.persistGame(game);
-        ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
-        let tutorialLeft = game.tutorialSeconds || 10;
-        const tutorialInterval = setInterval(() => {
-          tutorialLeft--;
-          if (ctx.activeGames[gameId] !== game || game.status !== "onboarding") {
-            clearInterval(tutorialInterval);
-            return;
-          }
-          if (tutorialLeft <= 0) {
-            clearInterval(tutorialInterval);
-            startCountdown(ctx, gameId, game, true);
-            return;
-          }
-          game.countdown = tutorialLeft;
-          ctx.persistGame(game);
-          ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
-        }, 1000);
-      } else {
-        startCountdown(ctx, gameId, game, true);
-      }
+      // Le tutoriel (onboarding) est maintenant affiché côté joueurs pendant le lobby
+      // (avant que l'hôte clique sur "Lancer"), donc on démarre directement le décompte
+      // sans phase bloquante de 10 s. La phase "onboarding" reste disponible si elle est
+      // déclenchée manuellement depuis un autre statut.
+      startCountdown(ctx, gameId, game, true);
       callback({ success: true });
     } else {
       callback({ success: false, error: "Permission refusée" });
@@ -745,6 +726,33 @@ export function registerHostHandlers(ctx: SocketHandlerContext) {
     } else {
       callback({ success: false, error: "Permission refusée" });
     }
+  });
+
+  socket.on("host:adjustScore", (rawPayload, callback: Ack) => {
+    const parsed = z
+      .object({
+        gameId: z.string().min(1).max(10),
+        hostToken: z.string().min(1),
+        playerId: z.string().min(1).max(100),
+        delta: z.number().int().min(-100).max(100),
+      })
+      .safeParse(rawPayload);
+    if (!parsed.success) return callback({ success: false, error: "Payload invalide" });
+    const { gameId, hostToken, playerId, delta } = parsed.data;
+    const game = ctx.activeGames[gameId];
+    const role = game ? ctx.getHostRole(game, hostToken) : null;
+    if (!game || !ctx.hasPermission(role, "control")) {
+      return callback({ success: false, error: "Permission refusée" });
+    }
+    const player = game.players[playerId];
+    if (!player) return callback({ success: false, error: "Joueur introuvable" });
+    player.score += delta;
+    game.lastActivity = Date.now();
+    const sign = delta >= 0 ? "+" : "";
+    logEvent(game, ctx, gameId, "score_adjusted", `${player.name} : ajustement manuel ${sign}${delta} pt(s)`);
+    ctx.persistGame(game);
+    ctx.io.to(gameId).emit("game:stateUpdate", ctx.sanitizeGameState(game));
+    callback({ success: true });
   });
 
   socket.on("host:unlockPlayer", ({ gameId, playerId, hostToken }, callback: Ack) => {

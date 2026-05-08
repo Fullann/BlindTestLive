@@ -500,6 +500,42 @@ export default function PlayerGame() {
           </div>
         )}
 
+        {/* Tutoriel affiché pendant le lobby pour que les joueurs lisent les règles avant le lancement */}
+        {gameState.status === 'lobby' && gameState.onboardingEnabled && (
+          <div className="w-full bg-zinc-900/85 border border-white/10 rounded-2xl p-5 space-y-3 text-center">
+            <p className="text-sm uppercase tracking-widest text-zinc-500">Comment jouer</p>
+            <p className="text-zinc-300 text-sm">
+              Appuie sur <span className="font-bold text-white">BUZZ</span> dès que tu reconnais la musique. L&apos;animateur valide ta réponse et les points s&apos;ajoutent.
+            </p>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                onClick={() => {
+                  setSoundEnabled((prev) => {
+                    const next = !prev;
+                    localStorage.setItem('blindtest_sound_enabled', String(next));
+                    return next;
+                  });
+                }}
+                className={clsx('rounded-lg py-2 text-sm border', soundEnabled ? 'bg-emerald-600/20 border-emerald-500/30 text-emerald-200' : 'bg-zinc-800 border-white/10 text-zinc-300')}
+              >
+                Son : {soundEnabled ? 'ON' : 'OFF'}
+              </button>
+              <button
+                onClick={() => {
+                  setHapticEnabled((prev) => {
+                    const next = !prev;
+                    localStorage.setItem('blindtest_haptic_enabled', String(next));
+                    return next;
+                  });
+                }}
+                className={clsx('rounded-lg py-2 text-sm border', hapticEnabled ? 'bg-emerald-600/20 border-emerald-500/30 text-emerald-200' : 'bg-zinc-800 border-white/10 text-zinc-300')}
+              >
+                Vibration : {hapticEnabled ? 'ON' : 'OFF'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Main action / end screen */}
         {gameState.status === 'finished' ? (
           <div className="w-full bg-zinc-900/85 border border-white/10 rounded-2xl p-5 space-y-4 text-center">

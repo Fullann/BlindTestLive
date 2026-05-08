@@ -568,6 +568,10 @@ export default function HostGame() {
     socket.emit('host:penalize', { gameId, playerId, hostToken }, () => {});
   };
 
+  const handleAdjustScore = (playerId: string, delta: number) => {
+    socket.emit('host:adjustScore', { gameId, hostToken, playerId, delta }, () => {});
+  };
+
   const handleUnlockPlayer = (playerId: string) => {
     socket.emit('host:unlockPlayer', { gameId, playerId, hostToken }, () => {});
   };
@@ -2223,6 +2227,7 @@ export default function HostGame() {
                       onApplyPower={handleApplyEventPower}
                       onUnlock={handleUnlockPlayer}
                       onKick={handleKickPlayer}
+                      onAdjustScore={handleAdjustScore}
                     />
                   ))}
                 </div>
